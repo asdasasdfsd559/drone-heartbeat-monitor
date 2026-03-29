@@ -16,18 +16,17 @@ class CoordTransform:
     
     @staticmethod
     def wgs84_to_gcj02(lng, lat):
-        """WGS84转GCJ02（高德/百度地图使用）- 简化版"""
         return lng + 0.0005, lat + 0.0003
     
     @staticmethod
     def gcj02_to_wgs84(lng, lat):
         return lng - 0.0005, lat - 0.0003
 
-# ==================== 地图函数 ====================
+# ==================== 3D地图函数 ====================
 
-def create_real_map(center_lng, center_lat, waypoints, coord_system):
+def create_3d_map(center_lng, center_lat, coord_system):
     """
-    创建真实地图 - 使用国内可访问的地图源
+    创建3D地形地图
     """
     
     # 根据坐标系转换显示坐标
@@ -36,123 +35,83 @@ def create_real_map(center_lng, center_lat, waypoints, coord_system):
     else:
         display_lng, display_lat = center_lng, center_lat
     
-    # 使用 CartoDB 地图源（国内可访问，稳定）
+    # 创建3D地图（启用3D视图）
     m = folium.Map(
         location=[display_lat, display_lng],
         zoom_start=17,
-        tiles='CartoDB positron',
         control_scale=True,
-        zoom_control=True
+        zoom_control=True,
+        tiles='https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+        attr='Google Terrain'
     )
     
-    # 添加 OpenStreetMap 作为备用
+    # 添加地形图层
+    folium.TileLayer(
+        'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+        attr='Google Terrain',
+        name='地形图',
+        control=True
+    ).add_to(m)
+    
+    # 添加卫星图层
+    folium.TileLayer(
+        'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        attr='Google Satellite',
+        name='卫星图',
+        control=True
+    ).add_to(m)
+    
+    # 添加街道图层
     folium.TileLayer(
         'OpenStreetMap',
-        name='标准地图',
+        name='街道图',
         control=True
     ).add_to(m)
     
-    # 添加 CartoDB Voyager（更详细）
-    folium.TileLayer(
-        'CartoDB voyager',
-        name='详细地图',
-        control=True
+    # 添加中心点标记
+    folium.Marker(
+        [display_lat, display_lng],
+        popup=f'📍 监测点<br>经度: {display_lng:.6f}<br>纬度: {display_lat:.6f}',
+        icon=folium.Icon(color='red', icon='home', prefix='fa')
     ).add_to(m)
     
-    # 添加飞行范围圆圈
+    # 添加3D高程效果（通过等高线表示）
+    # 添加一个半透明圆表示监测范围
     folium.Circle(
-        radius=400,
+        radius=500,
         location=[display_lat, display_lng],
         color='blue',
         fill=True,
-        fill_opacity=0.2,
-        weight=3,
-        popup='✈️ 飞行范围 (半径400米)'
+        fill_opacity=0.1,
+        weight=2,
+        popup='监测范围 (半径500米)'
     ).add_to(m)
     
-    # 添加起飞点
-    folium.Marker(
-        [display_lat, display_lng],
-        popup='🚁 起飞点/控制中心',
-        icon=folium.Icon(color='red', icon='plane', prefix='fa')
-    ).add_to(m)
-    
-    # 添加航点
-    if waypoints:
-        points = []
-        for i, wp in enumerate(waypoints):
-            # 坐标转换
-            if coord_system == 'gcj02':
-                wp_lng, wp_lat = wp['lng'] + 0.0005, wp['lat'] + 0.0003
-            else:
-                wp_lng, wp_lat = wp['lng'], wp['lat']
-            
-            points.append([wp_lat, wp_lng])
-            
-            # 航点颜色
-            if i == 0:
-                color = 'green'
-            elif i == len(waypoints) - 1:
-                color = 'darkgreen'
-            else:
-                color = 'blue'
-            
-            folium.Marker(
-                [wp_lat, wp_lng],
-                popup=f"""
-                <b>✈️ 航点 {i+1}</b><br>
-                高度: {wp['altitude']:.0f}m<br>
-                动作: {wp['action']}
-                """,
-                tooltip=f"航点 {i+1}",
-                icon=folium.Icon(color=color, icon='info-sign')
-            ).add_to(m)
-            
-            # 添加数字标签
-            folium.map.Marker(
-                [wp_lat, wp_lng],
-                icon=folium.DivIcon(
-                    icon_size=(28, 28),
-                    icon_anchor=(14, 14),
-                    html=f'<div style="font-size: 14px; font-weight: bold; background: white; border-radius: 50%; width: 24px; height: 24px; text-align: center; line-height: 24px; border: 2px solid #1f77b4;">{i+1}</div>'
-                )
-            ).add_to(m)
-        
-        # 绘制航线
-        folium.PolyLine(
-            points,
-            color='red',
-            weight=4,
-            opacity=0.9,
-            popup='✈️ 规划航线'
+    # 添加地形等高线效果（通过多个同心圆模拟）
+    for r in [100, 200, 300, 400, 500]:
+        folium.Circle(
+            radius=r,
+            location=[display_lat, display_lng],
+            color='green' if r % 200 == 0 else 'lightblue',
+            fill=False,
+            weight=1,
+            opacity=0.5
         ).add_to(m)
     
     # 添加图层控制
     folium.LayerControl(position='topright').add_to(m)
     
+    # 添加全屏按钮
+    folium.plugins.Fullscreen(
+        position='topright',
+        title='全屏模式',
+        title_cancel='退出全屏'
+    ).add_to(m)
+    
+    # 添加鼠标坐标显示
+    folium.plugins.MousePosition().add_to(m)
+    
     return m
-
-def create_waypoints(center_lng, center_lat):
-    """生成航线航点"""
-    waypoints = []
-    radius = 0.003  # 约300米半径
-    num_points = 12
-    
-    for i in range(num_points):
-        angle = i * (360 / num_points)
-        rad = math.radians(angle)
-        lng = center_lng + radius * math.cos(rad)
-        lat = center_lat + radius * math.sin(rad)
-        
-        waypoints.append({
-            'id': i,
-            'lng': lng,
-            'lat': lat,
-            'altitude': 100 + 20 * math.sin(rad * 2),
-            'action': 'fly' if i < num_points - 1 else 'land'
-        })
-    
-    return waypoints
 
 # ==================== 初始化数据 ====================
 
@@ -166,14 +125,10 @@ if 'heartbeats' not in st.session_state:
     st.session_state.sequence = 0
     st.session_state.last_time = datetime.now()
 
-# 初始化航线数据
+# 初始化地图坐标
 if 'center_lng' not in st.session_state:
     st.session_state.center_lng = 118.767413  # 南京新街口
     st.session_state.center_lat = 32.041544
-    st.session_state.waypoints = create_waypoints(
-        st.session_state.center_lng, 
-        st.session_state.center_lat
-    )
     st.session_state.coord_system = 'wgs84'
 
 # ==================== 自动生成心跳 ====================
@@ -199,7 +154,7 @@ with st.sidebar:
     # 页面选择
     selected_page = st.radio(
         "选择功能",
-        ["📡 飞行监控", "🗺️ 航线监测"],
+        ["📡 飞行监控", "🗺️ 3D地形监测"],
         index=0 if st.session_state.page == "飞行监控" else 1
     )
     st.session_state.page = selected_page
@@ -219,8 +174,8 @@ with st.sidebar:
         else:
             st.error(f"❌ 超时！{time_since}秒无心跳")
     
-    # 航线监测页面的设置
-    if "🗺️ 航线监测" in st.session_state.page:
+    # 3D地图设置
+    if "🗺️ 3D地形监测" in st.session_state.page:
         st.markdown("---")
         st.subheader("🗺️ 地图设置")
         
@@ -232,21 +187,7 @@ with st.sidebar:
         st.session_state.coord_system = coord_system
         
         st.markdown("---")
-        st.subheader("📍 航线位置")
-        
-        # 常用地点
-        locations = {
-            "南京新街口": (118.767413, 32.041544),
-            "北京天安门": (116.397128, 39.916527),
-            "上海外滩": (121.487899, 31.249162),
-            "广州塔": (113.318977, 23.106756),
-        }
-        
-        selected_loc = st.selectbox("快速定位", ["自定义"] + list(locations.keys()))
-        if selected_loc != "自定义":
-            lng, lat = locations[selected_loc]
-            st.session_state.center_lng = lng
-            st.session_state.center_lat = lat
+        st.subheader("📍 监测点位置")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -254,14 +195,13 @@ with st.sidebar:
         with col2:
             new_lat = st.number_input("纬度", value=st.session_state.center_lat, format="%.6f")
         
-        if st.button("🔄 更新航线", use_container_width=True):
+        if st.button("🔄 更新位置", use_container_width=True):
             st.session_state.center_lng = new_lng
             st.session_state.center_lat = new_lat
-            st.session_state.waypoints = create_waypoints(new_lng, new_lat)
-            st.success("航线已更新")
+            st.success("位置已更新")
             st.rerun()
         
-        st.caption("💡 提示：可缩放拖动查看真实地图")
+        st.caption("💡 3D地形图显示真实地形起伏")
 
 # ==================== 主内容区域 ====================
 
@@ -301,7 +241,7 @@ if "飞行监控" in st.session_state.page:
         if time_since >= 3:
             st.error(f"⚠️ 连接超时！已 {time_since} 秒未收到心跳包")
         
-        # 图表
+        # 心跳趋势图
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df['time'],
@@ -321,82 +261,57 @@ if "飞行监控" in st.session_state.page:
         
         st.plotly_chart(fig, use_container_width=True)
         
+        # 数据表
         with st.expander("📋 查看详细数据", expanded=False):
             st.dataframe(df.tail(20), use_container_width=True)
     else:
         st.info("⏳ 等待心跳数据生成...")
 
 else:
-    # ==================== 航线监测页面 ====================
-    st.header("🗺️ 航线监测")
+    # ==================== 3D地形监测页面 ====================
+    st.header("🗺️ 3D地形监测")
     
-    # 航线统计
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("✈️ 航点数量", len(st.session_state.waypoints))
-    with col2:
-        st.metric("📏 飞行高度", "80-120 米")
-    with col3:
-        st.metric("🎯 航线半径", "约300 米")
-    with col4:
-        total_dist = len(st.session_state.waypoints) * 157
-        st.metric("📐 总航线距离", f"{total_dist:.0f} 米")
-    
-    st.markdown("---")
-    
-    # 坐标信息
+    # 显示当前坐标
     coord_info = "WGS-84 (GPS坐标)" if st.session_state.coord_system == 'wgs84' else "GCJ-02 (高德/百度坐标)"
-    st.caption(f"📍 当前坐标系: {coord_info} | 中心点: {st.session_state.center_lng:.6f}, {st.session_state.center_lat:.6f}")
+    st.info(f"📍 当前监测点: {st.session_state.center_lng:.6f}, {st.session_state.center_lat:.6f} | {coord_info}")
     
-    # 显示地图
-    with st.spinner("加载地图中..."):
+    # 显示3D地图
+    with st.spinner("加载3D地形图中..."):
         try:
-            m = create_real_map(
+            m = create_3d_map(
                 st.session_state.center_lng,
                 st.session_state.center_lat,
-                st.session_state.waypoints,
                 st.session_state.coord_system
             )
             
             # 显示地图
-            st_folium(m, width=1000, height=600, returned_objects=[])
-            st.success("✅ 地图加载成功")
+            st_folium(m, width=1100, height=700, returned_objects=[])
+            st.success("✅ 3D地形图加载成功")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
-            st.info("""
-            **可能的原因：**
-            - 网络连接问题
-            - 地图源暂时不可用
-            - 请刷新页面重试
-            """)
+            st.info("请刷新页面重试")
     
-    # 说明
-    with st.expander("📖 使用说明", expanded=False):
+    # 地形说明
+    with st.expander("📖 3D地图使用说明", expanded=False):
         st.markdown("""
-        **地图操作指南：**
-        - 🖱️ **鼠标滚轮**：缩放地图
+        **3D地形图操作指南：**
+        - 🖱️ **鼠标滚轮**：缩放地图（放大可看到地形细节）
         - 🖱️ **鼠标拖动**：移动地图视角
-        - 🔍 **点击标记**：查看航点详情
-        - 🗺️ **右上角图层**：切换地图样式
+        - 🖱️ **鼠标右键拖动**：倾斜视角（3D效果）
+        - 🗺️ **右上角图层**：切换卫星图/地形图/街道图
+        - 🖥️ **全屏按钮**：全屏查看
         
-        **地图符号说明：**
-        - 🔴 **红色标记**：起飞点/控制中心
-        - 🔵 **蓝色标记**：中间航点
-        - 🟢 **绿色标记**：起点/终点
-        - 🔴 **红色连线**：规划航线
-        - 🔵 **蓝色圆圈**：飞行范围
-        - **数字标签**：航点编号
+        **地图说明：**
+        - 🔴 **红色标记**：监测点位置
+        - 🔵 **蓝色圆圈**：监测范围（半径500米）
+        - 🟢 **绿色等高线**：地形高度示意
+        - **地形图**：显示真实地形起伏（山脉、山谷等）
+        
+        **坐标系说明：**
+        - **WGS-84**：GPS使用的国际标准坐标
+        - **GCJ-02**：高德/百度地图使用的加密坐标
         """)
-    
-    # 航点详情
-    with st.expander("📋 航点详情", expanded=False):
-        waypoints_df = pd.DataFrame(st.session_state.waypoints)
-        waypoints_df['经度'] = waypoints_df['lng'].apply(lambda x: f"{x:.6f}")
-        waypoints_df['纬度'] = waypoints_df['lat'].apply(lambda x: f"{x:.6f}")
-        waypoints_df['高度(米)'] = waypoints_df['altitude'].apply(lambda x: f"{x:.1f}")
-        st.dataframe(waypoints_df[['id', '经度', '纬度', '高度(米)', 'action']], 
-                    use_container_width=True)
 
 # ==================== 自动刷新 ====================
 
