@@ -7,46 +7,7 @@ from datetime import datetime
 import folium
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="无人机地面站 - Bing混合地图", layout="wide")
-
-# ==================== 必应地图瓦片URL ====================
-
-def get_bing_hybrid_tile_url():
-    """返回必应混合地图的瓦片URL模板（卫星图+道路标注）"""
-    # 使用必应混合地图（Hybrid）
-    # {z} = 缩放级别, {x} = x坐标, {y} = y坐标
-    # 需要将xyz坐标转换为quadkey
-    return "https://t0.tiles.virtualearth.net/tiles/h{quadkey}.jpeg?g=685"
-
-def xyz_to_quadkey(x, y, z):
-    """将XYZ瓦片坐标转换为必应地图的QuadKey"""
-    quadkey = ""
-    for i in range(z, 0, -1):
-        digit = 0
-        mask = 1 << (i - 1)
-        if (x & mask) != 0:
-            digit += 1
-        if (y & mask) != 0:
-            digit += 2
-        quadkey += str(digit)
-    return quadkey
-
-# 自定义瓦片图层类
-class BingHybridTileLayer(folium.TileLayer):
-    """必应混合地图瓦片图层"""
-    def __init__(self, **kwargs):
-        super().__init__(
-            tiles='https://t0.tiles.virtualearth.net/tiles/h{quadkey}.jpeg?g=685',
-            attr='© Microsoft Bing Maps',
-            name='Bing混合地图',
-            overlay=False,
-            control=True,
-            **kwargs
-        )
-    
-    def get_tiles(self):
-        """需要自定义瓦片URL的quadkey转换，但folium支持{quadkey}占位符"""
-        return self.tiles
+st.set_page_config(page_title="无人机地面站", layout="wide")
 
 # ==================== 坐标系转换 ====================
 
@@ -61,44 +22,55 @@ class CoordTransform:
 
 # ==================== 地图函数 ====================
 
-def create_bing_map(center_lng, center_lat, waypoints, home_point, coord_system):
-    """创建使用必应混合地图的地面站地图"""
+def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
+    """创建地面站地图 - 使用国内可访问的卫星图"""
     
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
     else:
         display_lng, display_lat = center_lng, center_lat
     
-    # 创建地图，使用必应混合地图作为底图
-    # 注意：必应地图使用QuadKey系统，folium支持{quadkey}占位符
+    # 使用高德卫星图（国内可访问）
+    # 高德卫星图瓦片URL
+    amap_satellite = 'https://webst0{1,2,3,4}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'
+    
     m = folium.Map(
         location=[display_lat, display_lng],
-        zoom_start=17,
+        zoom_start=18,
         control_scale=True,
-        # 使用必应混合地图（卫星图+道路标注）
-        tiles='https://t0.tiles.virtualearth.net/tiles/h{quadkey}.jpeg?g=685',
-        attr='© Microsoft Bing Maps'
+        tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+        attr='高德地图'
     )
     
-    # 添加备用地图源
+    # 添加高德街道图（带标注）
     folium.TileLayer(
-        'OpenStreetMap',
-        name='OSM标准地图',
+        'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+        name='高德街道图',
+        attr='高德地图',
         control=True
     ).add_to(m)
     
+    # 添加 OpenStreetMap 作为备用
     folium.TileLayer(
-        'CartoDB positron',
-        name='CartoDB街道图',
+        'OpenStreetMap',
+        name='OSM街道图',
+        control=True
+    ).add_to(m)
+    
+    # 添加 CartoDB 深色地图
+    folium.TileLayer(
+        'CartoDB dark_matter',
+        name='深色地图',
         control=True
     ).add_to(m)
     
     # 添加Home点
     if home_point:
         if coord_system == 'gcj02':
-            h_lng, h_lat = home_point[0] + 0.0005, home_point[1] + 0.0003
-        else:
             h_lng, h_lat = home_point[0], home_point[1]
+        else:
+            # WGS84 转 GCJ02 用于高德地图显示
+            h_lng, h_lat = CoordTransform.wgs84_to_gcj02(home_point[0], home_point[1])
         
         folium.Marker(
             [h_lat, h_lng],
@@ -120,9 +92,10 @@ def create_bing_map(center_lng, center_lat, waypoints, home_point, coord_system)
         points = []
         for i, wp in enumerate(waypoints):
             if coord_system == 'gcj02':
-                wp_lng, wp_lat = wp[0] + 0.0005, wp[1] + 0.0003
-            else:
                 wp_lng, wp_lat = wp[0], wp[1]
+            else:
+                # WGS84 转 GCJ02
+                wp_lng, wp_lat = CoordTransform.wgs84_to_gcj02(wp[0], wp[1])
             
             points.append([wp_lat, wp_lng])
             
@@ -170,7 +143,6 @@ if 'heartbeats' not in st.session_state:
     st.session_state.last_time = datetime.now()
 
 if 'home_point' not in st.session_state:
-    # 南京某学校坐标
     st.session_state.home_point = (118.767413, 32.041544)
 
 if 'waypoints' not in st.session_state:
@@ -204,7 +176,7 @@ if time_diff >= 1:
 
 with st.sidebar:
     st.title("🎮 无人机地面站")
-    st.markdown("**地图**: 必应混合地图 (卫星图+道路)")
+    st.markdown("**地图**: 高德卫星图")
     
     selected_page = st.radio(
         "选择功能",
@@ -331,7 +303,7 @@ if "飞行监控" in st.session_state.page:
         st.info("等待心跳数据...")
 
 else:
-    st.header("🗺️ 航线规划 - 必应混合地图")
+    st.header("🗺️ 航线规划 - 高德卫星图")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -344,7 +316,7 @@ else:
     
     st.markdown("---")
     
-    with st.spinner("加载必应混合地图..."):
+    with st.spinner("加载高德卫星地图..."):
         try:
             if st.session_state.waypoints:
                 all_points = [st.session_state.home_point] + st.session_state.waypoints
@@ -353,7 +325,7 @@ else:
             else:
                 center_lng, center_lat = st.session_state.home_point
             
-            m = create_bing_map(
+            m = create_map(
                 center_lng,
                 center_lat,
                 st.session_state.waypoints,
@@ -362,12 +334,12 @@ else:
             )
             
             st_folium(m, width=1000, height=600)
-            st.success("✅ 必应混合地图加载成功")
-            st.caption("📸 地图类型：必应混合地图（卫星影像 + 道路/建筑标注）")
+            st.success("✅ 高德卫星地图加载成功")
+            st.caption("📸 地图类型：高德卫星图 + 街道标注")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
-            st.info("请检查网络连接后刷新页面")
+            st.info("请刷新页面重试")
     
     if st.session_state.waypoints and len(st.session_state.waypoints) >= 2:
         st.markdown("---")
