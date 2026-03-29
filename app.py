@@ -61,7 +61,7 @@ def create_mission_planner_map(center_lng, center_lat, waypoints, home_point, co
         control=True
     ).add_to(m)
     
-    # 添加Home点（类似Mission Planner的H点）
+    # 添加Home点
     if home_point:
         if coord_system == 'gcj02':
             h_lng, h_lat = home_point[0] + 0.0005, home_point[1] + 0.0003
@@ -72,10 +72,10 @@ def create_mission_planner_map(center_lng, center_lat, waypoints, home_point, co
         folium.Marker(
             [h_lat, h_lng],
             popup=f'<b>🏠 HOME</b><br>经度: {h_lng:.6f}<br>纬度: {h_lat:.6f}',
-            icon=folium.Icon(color='darkgreen', icon='home', prefix='fa', icon_size=(30, 30))
+            icon=folium.Icon(color='darkgreen', icon='home', prefix='fa')
         ).add_to(m)
         
-        # Home点圆圈（类似Mission Planner的RTL范围）
+        # Home点圆圈
         folium.Circle(
             radius=50,
             location=[h_lat, h_lng],
@@ -83,10 +83,10 @@ def create_mission_planner_map(center_lng, center_lat, waypoints, home_point, co
             fill=True,
             fill_opacity=0.3,
             weight=2,
-            popup='Home位置'
+            popup='Home位置 (RTL范围)'
         ).add_to(m)
     
-    # 添加航点（类似Mission Planner的WP）
+    # 添加航点
     if waypoints:
         points = []
         for i, wp in enumerate(waypoints):
@@ -97,7 +97,7 @@ def create_mission_planner_map(center_lng, center_lat, waypoints, home_point, co
             
             points.append([wp_lat, wp_lng])
             
-            # 航点样式（类似Mission Planner）
+            # 航点样式
             color = 'blue' if i < len(waypoints)-1 else 'red'
             icon = 'circle' if i < len(waypoints)-1 else 'flag-checkered'
             
@@ -126,50 +126,24 @@ def create_mission_planner_map(center_lng, center_lat, waypoints, home_point, co
             popup='飞行航线'
         ).add_to(m)
         
-        # 添加航向箭头
+        # 添加航向箭头（用三角形标记）
         for i in range(len(points) - 1):
             p1 = points[i]
             p2 = points[i + 1]
             mid_lat = (p1[0] + p2[0]) / 2
             mid_lng = (p1[1] + p2[1]) / 2
             
+            # 计算角度
             angle = math.degrees(math.atan2(p2[0] - p1[0], p2[1] - p1[1]))
             
-            folium.RegularPolygonMarker(
-                location=[mid_lat, mid_lng],
-                number_of_sides=3,
-                radius=8,
-                color='yellow',
-                fill=True,
-                fill_opacity=0.8,
-                rotation=angle
+            # 使用自定义图标作为箭头
+            folium.Marker(
+                [mid_lat, mid_lng],
+                icon=folium.Icon(color='yellow', icon='arrow-up', prefix='fa', angle=angle),
+                popup=f'方向: {angle:.0f}°'
             ).add_to(m)
     
-    # 添加网格（类似Mission Planner的坐标网格）
-    lat_step = 0.0005
-    lng_step = 0.0005
-    
-    # 绘制经纬度网格
-    for i in range(-5, 6):
-        # 经度线
-        lng_line = display_lng + i * lng_step
-        folium.PolyLine(
-            [[display_lat - 0.003, lng_line], [display_lat + 0.003, lng_line]],
-            color='gray',
-            weight=1,
-            opacity=0.5
-        ).add_to(m)
-        
-        # 纬度线
-        lat_line = display_lat + i * lat_step
-        folium.PolyLine(
-            [[lat_line, display_lng - 0.003], [lat_line, display_lng + 0.003]],
-            color='gray',
-            weight=1,
-            opacity=0.5
-        ).add_to(m)
-    
-    # 添加距离圆环（类似Mission Planner的距离环）
+    # 添加距离圆环
     for radius in [50, 100, 200, 500]:
         folium.Circle(
             radius=radius,
@@ -177,15 +151,34 @@ def create_mission_planner_map(center_lng, center_lat, waypoints, home_point, co
             color='white',
             fill=False,
             weight=1,
-            opacity=0.3,
-            popup=f'{radius}m'
+            opacity=0.3
         ).add_to(m)
     
-    # 添加北向指示
-    folium.plugins.Compass().add_to(m)
+    # 添加经纬度网格
+    for i in range(-3, 4):
+        # 经度线
+        lng_line = display_lng + i * 0.0005
+        folium.PolyLine(
+            [[display_lat - 0.002, lng_line], [display_lat + 0.002, lng_line]],
+            color='gray',
+            weight=1,
+            opacity=0.4
+        ).add_to(m)
+        
+        # 纬度线
+        lat_line = display_lat + i * 0.0005
+        folium.PolyLine(
+            [[lat_line, display_lng - 0.002], [lat_line, display_lng + 0.002]],
+            color='gray',
+            weight=1,
+            opacity=0.4
+        ).add_to(m)
     
-    # 添加全屏
+    # 添加全屏按钮
     folium.plugins.Fullscreen().add_to(m)
+    
+    # 添加鼠标位置显示
+    folium.plugins.MousePosition().add_to(m)
     
     # 添加图层控制
     folium.LayerControl(position='topright').add_to(m)
@@ -263,30 +256,38 @@ with st.sidebar:
         with col2:
             home_lat = st.number_input("纬度", value=st.session_state.home_point[1], format="%.6f", key="home_lat")
         
+        if st.button("🔄 更新Home点", use_container_width=True):
+            st.session_state.home_point = (home_lng, home_lat)
+            st.success("Home点已更新")
+            st.rerun()
+        
         st.markdown("---")
         st.subheader("✈️ 航点规划")
         
-        # 航点列表
+        # 显示现有航点
         if st.session_state.waypoints:
-            st.write(f"当前航点数: {len(st.session_state.waypoints)}")
+            st.write(f"**当前航点数: {len(st.session_state.waypoints)}**")
             for i, wp in enumerate(st.session_state.waypoints):
                 st.text(f"WP{i+1}: {wp[0]:.6f}, {wp[1]:.6f}")
         
         # 添加航点
+        st.write("**添加新航点:**")
         col3, col4 = st.columns(2)
         with col3:
-            wp_lng = st.number_input("航点经度", value=st.session_state.home_point[0] + 0.0005, format="%.6f", key="wp_lng")
+            wp_lng = st.number_input("经度", value=st.session_state.home_point[0] + 0.0005, format="%.6f", key="wp_lng")
         with col4:
-            wp_lat = st.number_input("航点纬度", value=st.session_state.home_point[1] + 0.0005, format="%.6f", key="wp_lat")
+            wp_lat = st.number_input("纬度", value=st.session_state.home_point[1] + 0.0005, format="%.6f", key="wp_lat")
         
         col5, col6 = st.columns(2)
         with col5:
             if st.button("➕ 添加航点", use_container_width=True):
                 st.session_state.waypoints.append((wp_lng, wp_lat))
+                st.success(f"已添加航点 {len(st.session_state.waypoints)}")
                 st.rerun()
         with col6:
-            if st.button("🗑️ 清空航点", use_container_width=True):
+            if st.button("🗑️ 清空所有航点", use_container_width=True):
                 st.session_state.waypoints = []
+                st.success("已清空所有航点")
                 st.rerun()
         
         st.markdown("---")
@@ -295,14 +296,9 @@ with st.sidebar:
         coord_system = st.selectbox(
             "坐标系",
             options=['wgs84', 'gcj02'],
-            format_func=lambda x: 'WGS-84 (GPS)' if x == 'wgs84' else 'GCJ-02 (高德/百度)'
+            format_func=lambda x: 'WGS-84 (GPS坐标)' if x == 'wgs84' else 'GCJ-02 (高德/百度地图)'
         )
         st.session_state.coord_system = coord_system
-        
-        if st.button("🔄 更新Home点", use_container_width=True):
-            st.session_state.home_point = (home_lng, home_lat)
-            st.success("Home点已更新")
-            st.rerun()
 
 # ==================== 主内容 ====================
 
@@ -412,9 +408,11 @@ else:
             )
             
             st_folium(m, width=1200, height=700, returned_objects=[])
+            st.success("✅ 地图加载成功")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
+            st.info("请检查网络连接后刷新页面")
     
     # 操作提示
     with st.expander("📖 Mission Planner 风格操作说明", expanded=False):
@@ -423,15 +421,15 @@ else:
         - 🖱️ 鼠标滚轮：缩放地图
         - 🖱️ 鼠标拖动：移动视角
         - 🗺️ 右上角：切换卫星图/街道图/地形图
-        - 🧭 指南针：显示北向
+        - 📍 鼠标位置：右下角显示实时坐标
         
         **地面站功能：**
-        - 🏠 **Home点**：绿色图标，无人机起飞点
-        - ✈️ **航点WP**：蓝色图标，带数字编号
+        - 🏠 **Home点**：绿色房子图标，无人机起飞点，带50m RTL范围圆
+        - ✈️ **航点WP**：蓝色圆点，带数字编号
         - 🔵 **航线**：青色线连接航点
-        - 🟡 **箭头**：指示飞行方向
-        - ⚪ **距离环**：50m, 100m, 200m, 500m
-        - 📏 **网格**：经纬度参考网格
+        - 🟡 **黄色箭头**：指示飞行方向
+        - ⚪ **距离环**：50m, 100m, 200m, 500m参考圆
+        - 📏 **灰色网格**：经纬度参考线
         
         **规划流程：**
         1. 设置Home点（起飞点）
@@ -440,6 +438,6 @@ else:
         4. 地图显示完整航线
         """)
 
-# 自动刷新
+# 自动刷新心跳
 time.sleep(1)
 st.rerun()
