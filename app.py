@@ -110,27 +110,36 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
     
     return m
 
-# ==================== 初始化 ====================
+# ==================== 初始化所有状态 ====================
 
+# 页面状态
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
+# 心跳数据
 if 'heartbeats' not in st.session_state:
     st.session_state.heartbeats = []
     st.session_state.sequence = 0
     st.session_state.last_time = datetime.now()
 
-# 南京某学校坐标
+# 地图数据 - 南京某学校坐标
 if 'home_point' not in st.session_state:
     st.session_state.home_point = (118.767413, 32.041544)
+
+if 'waypoints' not in st.session_state:
     st.session_state.waypoints = []
+
+if 'a_point' not in st.session_state:
     st.session_state.a_point = (118.767413, 32.041544)
+
+if 'b_point' not in st.session_state:
     st.session_state.b_point = (118.768413, 32.042544)
 
 if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
-# 自动生成心跳
+# ==================== 自动生成心跳 ====================
+
 current_time = datetime.now()
 time_diff = (current_time - st.session_state.last_time).total_seconds()
 
@@ -167,6 +176,7 @@ with st.sidebar:
         
         if time_since < 3:
             st.success(f"✅ 心跳正常 ({time_since}秒)")
+            st.metric("当前序列号", st.session_state.heartbeats[-1]['seq'])
         else:
             st.error(f"❌ 超时！{time_since}秒无心跳")
     
@@ -178,7 +188,7 @@ with st.sidebar:
         coord_system = st.selectbox(
             "坐标系",
             options=['wgs84', 'gcj02'],
-            format_func=lambda x: 'WGS-84 (GPS)' if x == 'wgs84' else 'GCJ-02 (高德/百度)'
+            format_func=lambda x: 'WGS-84 (GPS坐标)' if x == 'wgs84' else 'GCJ-02 (高德/百度)'
         )
         st.session_state.coord_system = coord_system
         
@@ -218,10 +228,12 @@ with st.sidebar:
                 st.session_state.a_point = (a_lng, a_lat)
                 st.session_state.b_point = (b_lng, b_lat)
                 st.session_state.waypoints = [st.session_state.a_point, st.session_state.b_point]
+                st.success(f"已生成航线: A→B")
                 st.rerun()
         with col8:
             if st.button("🗑️ 清空航线"):
                 st.session_state.waypoints = []
+                st.success("已清空航线")
                 st.rerun()
 
 # ==================== 主内容 ====================
@@ -232,7 +244,7 @@ if "飞行监控" in st.session_state.page:
     if st.session_state.heartbeats:
         df = pd.DataFrame(st.session_state.heartbeats)
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("总心跳数", len(df))
         with col2:
@@ -249,6 +261,12 @@ if "飞行监控" in st.session_state.page:
             else:
                 st.metric("连接状态", "❌ 离线")
         
+        with col4:
+            expected = df['seq'].iloc[-1]
+            received = len(df)
+            loss_rate = (expected - received) / expected * 100 if expected > 0 else 0
+            st.metric("丢包率", f"{loss_rate:.1f}%")
+        
         if time_since >= 3:
             st.error(f"⚠️ 连接超时！{time_since}秒未收到心跳")
         
@@ -259,31 +277,42 @@ if "飞行监控" in st.session_state.page:
             y=df['seq'],
             mode='lines+markers',
             name='心跳',
-            line=dict(color='blue', width=2)
+            line=dict(color='blue', width=2),
+            marker=dict(size=6, color='red')
         ))
-        fig.update_layout(title="心跳序列号趋势", xaxis_title="时间", yaxis_title="序列号", height=400)
+        fig.update_layout(
+            title="心跳序列号趋势",
+            xaxis_title="时间",
+            yaxis_title="序列号",
+            height=400
+        )
         st.plotly_chart(fig, use_container_width=True)
         
-        with st.expander("详细数据"):
+        with st.expander("📋 详细数据"):
             st.dataframe(df.tail(20), use_container_width=True)
     else:
         st.info("等待心跳数据...")
 
 else:
+    # 航线规划页面
     st.header("🗺️ 航线规划")
     
-    # 显示信息
+    # 显示当前信息
     col1, col2 = st.columns(2)
     with col1:
-        st.info(f"🏠 Home: {st.session_state.home_point[0]:.6f}, {st.session_state.home_point[1]:.6f}")
+        st.info(f"🏠 Home点: {st.session_state.home_point[0]:.6f}, {st.session_state.home_point[1]:.6f}")
     with col2:
         if st.session_state.waypoints:
-            st.success(f"✈️ 航点: {len(st.session_state.waypoints)} 个")
+            st.success(f"✈️ 当前航线: A→B ({len(st.session_state.waypoints)}个航点)")
+        else:
+            st.warning("⚠️ 暂无航线，请设置A点和B点后点击「生成航线」")
+    
+    st.markdown("---")
     
     # 显示地图
-    with st.spinner("加载地图..."):
+    with st.spinner("加载地图中..."):
         try:
-            # 计算地图中心
+            # 计算地图中心点
             if st.session_state.waypoints:
                 all_points = [st.session_state.home_point] + st.session_state.waypoints
                 center_lng = sum(p[0] for p in all_points) / len(all_points)
@@ -304,30 +333,31 @@ else:
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
-            st.info("请刷新页面重试")
+            st.info("请检查网络连接后刷新页面")
     
-    # 航线信息
-    if st.session_state.waypoints:
+    # 显示航线信息
+    if st.session_state.waypoints and len(st.session_state.waypoints) >= 2:
         st.markdown("---")
         st.subheader("📊 航线信息")
         
-        # 计算距离
-        total_dist = 0
-        prev = st.session_state.home_point
-        for wp in st.session_state.waypoints:
-            dx = (wp[0] - prev[0]) * 111000 * math.cos(math.radians((prev[1] + wp[1]) / 2))
-            dy = (wp[1] - prev[1]) * 111000
-            total_dist += math.sqrt(dx*dx + dy*dy)
-            prev = wp
+        # 计算A到B的距离
+        a = st.session_state.waypoints[0]
+        b = st.session_state.waypoints[-1]
+        
+        dx = (b[0] - a[0]) * 111000 * math.cos(math.radians((a[1] + b[1]) / 2))
+        dy = (b[1] - a[1]) * 111000
+        distance = math.sqrt(dx*dx + dy*dy)
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("起点 A", f"{st.session_state.a_point[0]:.6f}, {st.session_state.a_point[1]:.6f}")
+            st.metric("起点 A", f"{a[0]:.6f}, {a[1]:.6f}")
         with col2:
-            st.metric("终点 B", f"{st.session_state.b_point[0]:.6f}, {st.session_state.b_point[1]:.6f}")
+            st.metric("终点 B", f"{b[0]:.6f}, {b[1]:.6f}")
         with col3:
-            st.metric("直线距离", f"{total_dist:.1f} 米")
+            st.metric("直线距离", f"{distance:.1f} 米")
+        
+        st.caption("💡 地图上的红色方块就是建筑物（障碍物），航线需要避开它们")
 
-# 自动刷新
+# 自动刷新心跳
 time.sleep(1)
 st.rerun()
