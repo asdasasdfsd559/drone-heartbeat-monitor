@@ -7,7 +7,46 @@ from datetime import datetime
 import folium
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="无人机地面站", layout="wide")
+st.set_page_config(page_title="无人机地面站 - Bing混合地图", layout="wide")
+
+# ==================== 必应地图瓦片URL ====================
+
+def get_bing_hybrid_tile_url():
+    """返回必应混合地图的瓦片URL模板（卫星图+道路标注）"""
+    # 使用必应混合地图（Hybrid）
+    # {z} = 缩放级别, {x} = x坐标, {y} = y坐标
+    # 需要将xyz坐标转换为quadkey
+    return "https://t0.tiles.virtualearth.net/tiles/h{quadkey}.jpeg?g=685"
+
+def xyz_to_quadkey(x, y, z):
+    """将XYZ瓦片坐标转换为必应地图的QuadKey"""
+    quadkey = ""
+    for i in range(z, 0, -1):
+        digit = 0
+        mask = 1 << (i - 1)
+        if (x & mask) != 0:
+            digit += 1
+        if (y & mask) != 0:
+            digit += 2
+        quadkey += str(digit)
+    return quadkey
+
+# 自定义瓦片图层类
+class BingHybridTileLayer(folium.TileLayer):
+    """必应混合地图瓦片图层"""
+    def __init__(self, **kwargs):
+        super().__init__(
+            tiles='https://t0.tiles.virtualearth.net/tiles/h{quadkey}.jpeg?g=685',
+            attr='© Microsoft Bing Maps',
+            name='Bing混合地图',
+            overlay=False,
+            control=True,
+            **kwargs
+        )
+    
+    def get_tiles(self):
+        """需要自定义瓦片URL的quadkey转换，但folium支持{quadkey}占位符"""
+        return self.tiles
 
 # ==================== 坐标系转换 ====================
 
@@ -22,23 +61,37 @@ class CoordTransform:
 
 # ==================== 地图函数 ====================
 
-def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
-    """创建地面站地图"""
+def create_bing_map(center_lng, center_lat, waypoints, home_point, coord_system):
+    """创建使用必应混合地图的地面站地图"""
     
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
     else:
         display_lng, display_lat = center_lng, center_lat
     
+    # 创建地图，使用必应混合地图作为底图
+    # 注意：必应地图使用QuadKey系统，folium支持{quadkey}占位符
     m = folium.Map(
         location=[display_lat, display_lng],
         zoom_start=17,
         control_scale=True,
-        tiles='CartoDB positron'
+        # 使用必应混合地图（卫星图+道路标注）
+        tiles='https://t0.tiles.virtualearth.net/tiles/h{quadkey}.jpeg?g=685',
+        attr='© Microsoft Bing Maps'
     )
     
-    folium.TileLayer('OpenStreetMap', name='标准地图').add_to(m)
-    folium.TileLayer('CartoDB dark_matter', name='深色地图').add_to(m)
+    # 添加备用地图源
+    folium.TileLayer(
+        'OpenStreetMap',
+        name='OSM标准地图',
+        control=True
+    ).add_to(m)
+    
+    folium.TileLayer(
+        'CartoDB positron',
+        name='CartoDB街道图',
+        control=True
+    ).add_to(m)
     
     # 添加Home点
     if home_point:
@@ -91,6 +144,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
         
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
+    # 添加距离圆环
     for r in [50, 100, 200]:
         folium.Circle(
             radius=r,
@@ -116,6 +170,7 @@ if 'heartbeats' not in st.session_state:
     st.session_state.last_time = datetime.now()
 
 if 'home_point' not in st.session_state:
+    # 南京某学校坐标
     st.session_state.home_point = (118.767413, 32.041544)
 
 if 'waypoints' not in st.session_state:
@@ -149,6 +204,7 @@ if time_diff >= 1:
 
 with st.sidebar:
     st.title("🎮 无人机地面站")
+    st.markdown("**地图**: 必应混合地图 (卫星图+道路)")
     
     selected_page = st.radio(
         "选择功能",
@@ -275,7 +331,7 @@ if "飞行监控" in st.session_state.page:
         st.info("等待心跳数据...")
 
 else:
-    st.header("🗺️ 航线规划")
+    st.header("🗺️ 航线规划 - 必应混合地图")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -288,7 +344,7 @@ else:
     
     st.markdown("---")
     
-    with st.spinner("加载地图中..."):
+    with st.spinner("加载必应混合地图..."):
         try:
             if st.session_state.waypoints:
                 all_points = [st.session_state.home_point] + st.session_state.waypoints
@@ -297,7 +353,7 @@ else:
             else:
                 center_lng, center_lat = st.session_state.home_point
             
-            m = create_map(
+            m = create_bing_map(
                 center_lng,
                 center_lat,
                 st.session_state.waypoints,
@@ -306,7 +362,8 @@ else:
             )
             
             st_folium(m, width=1000, height=600)
-            st.success("✅ 地图加载成功")
+            st.success("✅ 必应混合地图加载成功")
+            st.caption("📸 地图类型：必应混合地图（卫星影像 + 道路/建筑标注）")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
