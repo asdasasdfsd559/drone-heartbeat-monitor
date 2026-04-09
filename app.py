@@ -4,11 +4,34 @@ import plotly.graph_objects as go
 import time
 import math
 import threading
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import folium
 from streamlit_folium import st_folium
 
 st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", layout="wide")
+
+# ==================== 北京时间工具函数 ====================
+
+def get_beijing_time():
+    """获取当前北京时间（UTC+8）"""
+    # 方法1：使用 timezone
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_time = datetime.now(beijing_tz)
+    return beijing_time
+
+def get_beijing_time_str():
+    """获取北京时间字符串（精确到毫秒）"""
+    beijing_time = get_beijing_time()
+    return beijing_time.strftime("%H:%M:%S.%f")[:-3]
+
+def get_beijing_date_str():
+    """获取北京日期字符串"""
+    beijing_time = get_beijing_time()
+    return beijing_time.strftime("%Y年%m月%d日")
+
+def get_beijing_datetime():
+    """获取完整的北京时间"""
+    return get_beijing_time()
 
 # ==================== 独立心跳线程 ====================
 
@@ -18,7 +41,7 @@ class HeartbeatManager:
     def __init__(self):
         self.heartbeats = []
         self.sequence = 0
-        self.last_time = datetime.now()
+        self.last_time = get_beijing_time()
         self.running = False
         self.thread = None
         self.lock = threading.Lock()
@@ -41,10 +64,10 @@ class HeartbeatManager:
             
             with self.lock:
                 self.sequence += 1
-                now = datetime.now()
+                now = get_beijing_time()
                 self.heartbeats.append({
                     'time': now.strftime("%H:%M:%S"),
-                    'time_ms': now.strftime("%H:%M:%S.%f")[:-3],  # 精确到毫秒
+                    'time_ms': now.strftime("%H:%M:%S.%f")[:-3],
                     'seq': self.sequence,
                     'timestamp': time.time()
                 })
@@ -252,20 +275,21 @@ with st.sidebar:
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控 - 心跳数据")
     
-    # ========== 显示当前时间（大字体） ==========
-    current_now = datetime.now()
-    st.markdown("### 🕐 当前系统时间")
+    # ========== 显示北京时间（大字体） ==========
+    beijing_now = get_beijing_time()
     
-    # 大字体显示当前时间
+    st.markdown("### 🕐 北京时间 (UTC+8)")
+    
+    # 大字体显示当前北京时间
     st.markdown(f"""
     <div style="text-align: center; background-color: #1e1e1e; padding: 20px; border-radius: 10px; margin: 10px 0;">
-        <h1 style="font-size: 48px; color: #00ff00; font-family: monospace;">
-            {current_now.strftime("%Y-%m-%d")}
+        <h1 style="font-size: 36px; color: #ffaa00; font-family: monospace;">
+            📅 {beijing_now.strftime("%Y年%m月%d日")}
         </h1>
         <h1 style="font-size: 72px; color: #00ff00; font-family: monospace; margin-top: -10px;">
-            {current_now.strftime("%H:%M:%S")}
+            {beijing_now.strftime("%H:%M:%S")}
         </h1>
-        <p style="font-size: 16px; color: #888;">北京时间 (UTC+8)</p>
+        <p style="font-size: 16px; color: #888;">中国标准时间 (UTC+8) | 南京</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -305,7 +329,6 @@ if "飞行监控" in st.session_state.page:
             st.metric("丢包率", f"{loss_rate:.1f}%")
         
         with col5:
-            # 显示最后心跳时间
             last_hb = heartbeats[-1]
             st.metric("最后心跳", last_hb['time_ms'])
         
@@ -350,16 +373,16 @@ if "飞行监控" in st.session_state.page:
         ))
         fig.update_layout(
             title="心跳序列号趋势",
-            xaxis_title="时间",
+            xaxis_title="时间 (北京时间)",
             yaxis_title="序列号",
             height=300
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # 详细数据表格（显示精确时间）
+        # 详细数据表格
         with st.expander("📋 详细数据", expanded=False):
             display_df = df[['time_ms', 'seq']].tail(20)
-            display_df.columns = ['时间 (精确到毫秒)', '序列号']
+            display_df.columns = ['北京时间 (精确到毫秒)', '序列号']
             st.dataframe(display_df, use_container_width=True)
     else:
         st.info("等待心跳数据...")
