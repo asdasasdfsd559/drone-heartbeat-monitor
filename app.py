@@ -163,7 +163,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
-    # ========== 添加障碍物（多边形） ==========
+    # ========== 添加障碍物（多边形）- 不添加中心标记 ==========
     for i, obstacle in enumerate(obstacles):
         # 转换坐标
         polygon_points = []
@@ -174,24 +174,15 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
                 lng, lat = CoordTransform.wgs84_to_gcj02(point[0], point[1])
             polygon_points.append([lat, lng])
         
-        # 绘制多边形
+        # 只绘制多边形，不添加中心标记
         folium.Polygon(
             locations=polygon_points,
             color='red',
             weight=3,
             fill=True,
             fill_opacity=0.4,
-            popup=f"🚧 障碍物 {i+1}: {obstacle['name']}",
-            tooltip=f"障碍物 {i+1}"
-        ).add_to(m)
-        
-        # 添加中心点标记
-        center_lat = sum(p[0] for p in polygon_points) / len(polygon_points)
-        center_lng = sum(p[1] for p in polygon_points) / len(polygon_points)
-        folium.Marker(
-            [center_lat, center_lng],
-            icon=folium.Icon(color='darkred', icon='exclamation-triangle', prefix='fa'),
-            popup=f"障碍物中心"
+            popup=f"🚧 {obstacle['name']}",
+            tooltip=f"{obstacle['name']}"
         ).add_to(m)
     
     # 添加多边形绘制工具（Draw插件）
@@ -342,16 +333,6 @@ with st.sidebar:
         
         # 显示当前障碍物数量
         st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
-        
-        # 添加新障碍物
-        st.markdown("**添加新障碍物:**")
-        new_obs_name = st.text_input("障碍物名称", value=f"障碍物{st.session_state.next_obstacle_id + 1}", key="new_obs_name")
-        
-        st.caption("💡 提示: 在地图上使用多边形绘制工具画出障碍物区域，然后点击下方按钮保存")
-        
-        if st.button("💾 保存当前绘制的多边形", key="save_obstacle"):
-            st.info("请在地图上绘制多边形后，从地图返回的数据中获取坐标")
-            # 这个功能需要从地图回调中获取绘制的多边形数据
         
         st.markdown("---")
         st.subheader("🗑️ 删除障碍物")
