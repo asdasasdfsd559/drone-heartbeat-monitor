@@ -12,15 +12,26 @@ st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", l
 
 # ==================== 北京时间工具函数 ====================
 
+# 创建北京时区
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 def get_beijing_time():
     """获取当前北京时间（UTC+8）"""
-    beijing_tz = timezone(timedelta(hours=8))
-    return datetime.now(beijing_tz)
+    return datetime.now(BEIJING_TZ)
+
+def get_beijing_time_ms():
+    """获取北京时间字符串（精确到毫秒）"""
+    now = get_beijing_time()
+    return now.strftime("%H:%M:%S.%f")[:-3]
+
+def get_beijing_datetime():
+    """获取完整的北京时间"""
+    return get_beijing_time()
 
 # ==================== 独立心跳线程 ====================
 
 class HeartbeatManager:
-    """独立的心跳管理器"""
+    """独立的心跳管理器 - 使用北京时间"""
     
     def __init__(self):
         self.heartbeats = []
@@ -48,12 +59,12 @@ class HeartbeatManager:
             
             with self.lock:
                 self.sequence += 1
-                now = get_beijing_time()
+                now = get_beijing_time()  # 使用北京时间
                 self.heartbeats.append({
                     'time': now.strftime("%H:%M:%S"),
                     'time_ms': now.strftime("%H:%M:%S.%f")[:-3],  # 精确到毫秒
                     'seq': self.sequence,
-                    'timestamp': time.time()
+                    'timestamp': now.timestamp()  # 使用北京时间的时间戳
                 })
                 if len(self.heartbeats) > 100:
                     self.heartbeats.pop(0)
@@ -72,7 +83,10 @@ class HeartbeatManager:
             if not self.heartbeats:
                 return "等待", 0
             last = self.heartbeats[-1]
-            time_since = time.time() - last['timestamp']
+            # 使用时间戳计算间隔
+            now = get_beijing_time()
+            last_dt = datetime.fromtimestamp(last['timestamp'], tz=BEIJING_TZ)
+            time_since = (now - last_dt).total_seconds()
             if time_since < 3:
                 return "在线", time_since
             else:
@@ -258,6 +272,7 @@ with st.sidebar:
 
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控 - 心跳数据")
+    st.caption("🕐 所有时间均为北京时间 (UTC+8)")
     
     heartbeats, seq, last_time = st.session_state.heartbeat_mgr.get_data()
     
@@ -333,13 +348,13 @@ if "飞行监控" in st.session_state.page:
         ))
         fig.update_layout(
             title="心跳序列号趋势",
-            xaxis_title="时间 (北京时间)",
+            xaxis_title="北京时间",
             yaxis_title="序列号",
             height=300
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # ========== 详细数据表格（精确到毫秒） ==========
+        # ========== 详细数据表格（北京时间，精确到毫秒） ==========
         st.subheader("📋 详细心跳数据")
         
         # 显示最近的20条心跳数据
@@ -353,7 +368,7 @@ if "飞行监控" in st.session_state.page:
                 "北京时间 (精确到毫秒)": st.column_config.TextColumn(
                     "北京时间 (精确到毫秒)",
                     width="medium",
-                    help="心跳包接收时间，精确到毫秒"
+                    help="心跳包接收时间（北京时间），精确到毫秒"
                 ),
                 "序列号": st.column_config.NumberColumn(
                     "序列号",
@@ -365,7 +380,11 @@ if "飞行监控" in st.session_state.page:
         
         # 显示最新心跳的精确时间
         latest = heartbeats[-1]
-        st.caption(f"✅ 最新心跳时间: {latest['time_ms']} | 序列号: {latest['seq']}")
+        st.success(f"✅ 最新心跳时间: {latest['time_ms']} (北京时间) | 序列号: {latest['seq']}")
+        
+        # 显示当前北京时间
+        now_beijing = get_beijing_time()
+        st.caption(f"🕐 当前北京时间: {now_beijing.strftime('%Y年%m月%d日 %H:%M:%S')}")
         
     else:
         st.info("等待心跳数据...")
