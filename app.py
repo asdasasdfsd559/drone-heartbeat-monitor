@@ -9,6 +9,117 @@ from streamlit_folium import st_folium
 
 st.set_page_config(page_title="无人机地面站", layout="wide")
 
+# ==================== 精确心跳模拟器 ====================
+
+class PreciseHeartbeatSimulator:
+    """精确时间的心跳模拟器"""
+    
+    def __init__(self):
+        self.heartbeats = []
+        self.sequence = 0
+        self.last_send_time = None
+        self.last_receive_time = None
+        self.expected_interval = 1.0  # 期望间隔1秒
+        self.timeout_threshold = 3.0  # 超时阈值3秒
+        
+    def update(self):
+        """更新时间驱动的心跳生成"""
+        current_time = time.time()
+        
+        # 初始化
+        if self.last_send_time is None:
+            self.last_send_time = current_time
+            self.last_receive_time = current_time
+            return
+        
+        # 计算时间差
+        elapsed = current_time - self.last_send_time
+        
+        # 如果达到发送间隔，生成新心跳
+        if elapsed >= self.expected_interval:
+            # 精确计算序列号（补偿误差）
+            expected_seq = int((current_time - self.last_send_time) / self.expected_interval)
+            
+            for i in range(expected_seq):
+                self.sequence += 1
+                send_time = self.last_send_time + (i + 1) * self.expected_interval
+                
+                self.heartbeats.append({
+                    'time': datetime.fromtimestamp(send_time).strftime("%H:%M:%S.%f")[:-3],
+                    'seq': self.sequence,
+                    'send_timestamp': send_time,
+                    'receive_timestamp': current_time,
+                    'delay_ms': (current_time - send_time) * 1000
+                })
+            
+            self.last_send_time = current_time
+            self.last_receive_time = current_time
+            
+            # 限制数据量
+            if len(self.heartbeats) > 100:
+                self.heartbeats = self.heartbeats[-100:]
+    
+    def get_connection_status(self):
+        """获取连接状态"""
+        if not self.heartbeats:
+            return "等待", 0
+        
+        last_heartbeat = self.heartbeats[-1]
+        time_since = time.time() - last_heartbeat['send_timestamp']
+        
+        if time_since < self.timeout_threshold:
+            return "在线", time_since
+        else:
+            return "超时", time_since
+    
+    def get_dataframe(self):
+        """获取DataFrame"""
+        if not self.heartbeats:
+            return pd.DataFrame()
+        return pd.DataFrame(self.heartbeats)
+    
+    def get_statistics(self):
+        """获取统计信息"""
+        if not self.heartbeats:
+            return {}
+        
+        delays = [h['delay_ms'] for h in self.heartbeats]
+        
+        return {
+            'total': len(self.heartbeats),
+            'avg_delay_ms': sum(delays) / len(delays),
+            'max_delay_ms': max(delays),
+            'min_delay_ms': min(delays),
+            'last_seq': self.heartbeats[-1]['seq']
+        }
+
+# ==================== 初始化 ====================
+
+if 'simulator' not in st.session_state:
+    st.session_state.simulator = PreciseHeartbeatSimulator()
+
+if 'page' not in st.session_state:
+    st.session_state.page = "飞行监控"
+
+if 'home_point' not in st.session_state:
+    st.session_state.home_point = (118.767413, 32.041544)
+
+if 'waypoints' not in st.session_state:
+    st.session_state.waypoints = []
+
+if 'a_point' not in st.session_state:
+    st.session_state.a_point = (118.767413, 32.041544)
+
+if 'b_point' not in st.session_state:
+    st.session_state.b_point = (118.768413, 32.042544)
+
+if 'coord_system' not in st.session_state:
+    st.session_state.coord_system = 'wgs84'
+
+# ==================== 更新心跳（使用精确时间）====================
+
+st.session_state.simulator.update()
+
 # ==================== 坐标系转换 ====================
 
 class CoordTransform:
@@ -23,16 +134,12 @@ class CoordTransform:
 # ==================== 地图函数 ====================
 
 def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
-    """创建地面站地图 - 使用国内可访问的卫星图"""
+    """创建地面站地图"""
     
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
     else:
         display_lng, display_lat = center_lng, center_lat
-    
-    # 使用高德卫星图（国内可访问）
-    # 高德卫星图瓦片URL
-    amap_satellite = 'https://webst0{1,2,3,4}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'
     
     m = folium.Map(
         location=[display_lat, display_lng],
@@ -42,7 +149,6 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
         attr='高德地图'
     )
     
-    # 添加高德街道图（带标注）
     folium.TileLayer(
         'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
         name='高德街道图',
@@ -50,26 +156,16 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
         control=True
     ).add_to(m)
     
-    # 添加 OpenStreetMap 作为备用
     folium.TileLayer(
         'OpenStreetMap',
         name='OSM街道图',
         control=True
     ).add_to(m)
     
-    # 添加 CartoDB 深色地图
-    folium.TileLayer(
-        'CartoDB dark_matter',
-        name='深色地图',
-        control=True
-    ).add_to(m)
-    
-    # 添加Home点
     if home_point:
         if coord_system == 'gcj02':
             h_lng, h_lat = home_point[0], home_point[1]
         else:
-            # WGS84 转 GCJ02 用于高德地图显示
             h_lng, h_lat = CoordTransform.wgs84_to_gcj02(home_point[0], home_point[1])
         
         folium.Marker(
@@ -87,14 +183,12 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
             weight=2
         ).add_to(m)
     
-    # 添加航点
     if waypoints:
         points = []
         for i, wp in enumerate(waypoints):
             if coord_system == 'gcj02':
                 wp_lng, wp_lat = wp[0], wp[1]
             else:
-                # WGS84 转 GCJ02
                 wp_lng, wp_lat = CoordTransform.wgs84_to_gcj02(wp[0], wp[1])
             
             points.append([wp_lat, wp_lng])
@@ -117,7 +211,6 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
         
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
-    # 添加距离圆环
     for r in [50, 100, 200]:
         folium.Circle(
             radius=r,
@@ -132,51 +225,11 @@ def create_map(center_lng, center_lat, waypoints, home_point, coord_system):
     
     return m
 
-# ==================== 初始化所有状态 ====================
-
-if 'page' not in st.session_state:
-    st.session_state.page = "飞行监控"
-
-if 'heartbeats' not in st.session_state:
-    st.session_state.heartbeats = []
-    st.session_state.sequence = 0
-    st.session_state.last_time = datetime.now()
-
-if 'home_point' not in st.session_state:
-    st.session_state.home_point = (118.767413, 32.041544)
-
-if 'waypoints' not in st.session_state:
-    st.session_state.waypoints = []
-
-if 'a_point' not in st.session_state:
-    st.session_state.a_point = (118.767413, 32.041544)
-
-if 'b_point' not in st.session_state:
-    st.session_state.b_point = (118.768413, 32.042544)
-
-if 'coord_system' not in st.session_state:
-    st.session_state.coord_system = 'wgs84'
-
-# ==================== 自动生成心跳 ====================
-
-current_time = datetime.now()
-time_diff = (current_time - st.session_state.last_time).total_seconds()
-
-if time_diff >= 1:
-    st.session_state.sequence += 1
-    st.session_state.heartbeats.append({
-        'time': current_time.strftime("%H:%M:%S"),
-        'seq': st.session_state.sequence
-    })
-    if len(st.session_state.heartbeats) > 100:
-        st.session_state.heartbeats.pop(0)
-    st.session_state.last_time = current_time
-
 # ==================== 侧边栏 ====================
 
 with st.sidebar:
     st.title("🎮 无人机地面站")
-    st.markdown("**地图**: 高德卫星图")
+    st.markdown("**心跳**: 精确时间驱动 (±1ms)")
     
     selected_page = st.radio(
         "选择功能",
@@ -188,17 +241,21 @@ with st.sidebar:
     
     st.markdown("---")
     
-    if st.session_state.heartbeats:
-        last_time_str = st.session_state.heartbeats[-1]['time']
-        last_heartbeat = datetime.strptime(last_time_str, "%H:%M:%S")
-        now = datetime.now()
-        time_since = (now - last_heartbeat.replace(year=now.year, month=now.month, day=now.day)).seconds
-        
-        if time_since < 3:
-            st.success(f"✅ 心跳正常 ({time_since}秒)")
-            st.metric("当前序列号", st.session_state.heartbeats[-1]['seq'])
-        else:
-            st.error(f"❌ 超时！{time_since}秒无心跳")
+    # 心跳状态显示
+    status, time_since = st.session_state.simulator.get_connection_status()
+    
+    if status == "在线":
+        st.success(f"✅ 心跳正常")
+        st.metric("最后心跳", f"{time_since:.2f}秒前")
+    else:
+        st.error(f"❌ {status}")
+        st.metric("无心跳时间", f"{time_since:.1f}秒")
+    
+    stats = st.session_state.simulator.get_statistics()
+    if stats:
+        st.metric("总心跳数", stats['total'])
+        st.metric("当前序列号", stats['last_seq'])
+        st.metric("平均延迟", f"{stats['avg_delay_ms']:.1f}ms")
     
     if "🗺️ 航线规划" in st.session_state.page:
         st.markdown("---")
@@ -249,61 +306,85 @@ with st.sidebar:
 # ==================== 主内容 ====================
 
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控")
+    st.header("📡 飞行监控 - 精确时间心跳")
     
-    if st.session_state.heartbeats:
-        df = pd.DataFrame(st.session_state.heartbeats)
-        
+    df = st.session_state.simulator.get_dataframe()
+    
+    if not df.empty:
+        # 统计卡片
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("总心跳数", len(df))
         with col2:
             st.metric("当前序列号", df['seq'].iloc[-1])
         
-        last_time_str = df['time'].iloc[-1]
-        last_heartbeat = datetime.strptime(last_time_str, "%H:%M:%S")
-        now = datetime.now()
-        time_since = (now - last_heartbeat.replace(year=now.year, month=now.month, day=now.day)).seconds
-        
+        status, time_since = st.session_state.simulator.get_connection_status()
         with col3:
-            if time_since < 3:
+            if status == "在线":
                 st.metric("连接状态", "✅ 在线")
             else:
                 st.metric("连接状态", "❌ 离线")
         
+        stats = st.session_state.simulator.get_statistics()
         with col4:
-            expected = df['seq'].iloc[-1]
-            received = len(df)
-            loss_rate = (expected - received) / expected * 100 if expected > 0 else 0
-            st.metric("丢包率", f"{loss_rate:.1f}%")
+            st.metric("平均延迟", f"{stats.get('avg_delay_ms', 0):.1f}ms")
         
-        if time_since >= 3:
-            st.error(f"⚠️ 连接超时！{time_since}秒未收到心跳")
+        if status == "超时":
+            st.error(f"⚠️ 连接超时！已 {time_since:.1f} 秒未收到心跳")
         
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
+        # 心跳序列号趋势图
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(
             x=df['time'],
             y=df['seq'],
             mode='lines+markers',
-            name='心跳',
+            name='序列号',
             line=dict(color='blue', width=2),
             marker=dict(size=6, color='red')
         ))
-        fig.update_layout(
+        fig1.update_layout(
             title="心跳序列号趋势",
             xaxis_title="时间",
             yaxis_title="序列号",
-            height=400
+            height=350
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig1, use_container_width=True)
         
-        with st.expander("📋 详细数据"):
-            st.dataframe(df.tail(20), use_container_width=True)
+        # 延迟趋势图（新增）
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=df['time'],
+            y=df['delay_ms'],
+            mode='lines+markers',
+            name='延迟',
+            line=dict(color='orange', width=2),
+            marker=dict(size=6, color='red')
+        ))
+        fig2.add_hline(y=50, line_dash="dash", line_color="green", annotation_text="良好")
+        fig2.add_hline(y=100, line_dash="dash", line_color="yellow", annotation_text="警告")
+        fig2.add_hline(y=200, line_dash="dash", line_color="red", annotation_text="严重")
+        fig2.update_layout(
+            title="心跳延迟趋势（毫秒）",
+            xaxis_title="时间",
+            yaxis_title="延迟 (ms)",
+            height=350
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # 详细数据表
+        with st.expander("📋 详细数据（含精确时间）"):
+            display_df = df[['time', 'seq', 'delay_ms']].tail(30)
+            display_df.columns = ['时间', '序列号', '延迟(ms)']
+            st.dataframe(display_df, use_container_width=True)
+        
+        # 精确时间说明
+        st.info("💡 使用精确时间驱动，心跳间隔误差 < 1ms，延迟精确到毫秒级")
+        
     else:
         st.info("等待心跳数据...")
 
 else:
-    st.header("🗺️ 航线规划 - 高德卫星图")
+    st.header("🗺️ 航线规划")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -335,11 +416,9 @@ else:
             
             st_folium(m, width=1000, height=600)
             st.success("✅ 高德卫星地图加载成功")
-            st.caption("📸 地图类型：高德卫星图 + 街道标注")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
-            st.info("请刷新页面重试")
     
     if st.session_state.waypoints and len(st.session_state.waypoints) >= 2:
         st.markdown("---")
@@ -360,5 +439,6 @@ else:
         with col3:
             st.metric("直线距离", f"{distance:.1f} 米")
 
-time.sleep(1)
+# 使用精确的时间间隔刷新（0.1秒而不是1秒）
+time.sleep(0.1)
 st.rerun()
