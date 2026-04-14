@@ -64,11 +64,11 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 创建独立地图组件（使用 CartoDB 瓦片，无需注册） ====================
-def leaflet_map_component(existing_obstacles):
+# ==================== 独立地图组件（无需注册） ====================
+def obstacle_map_component(existing_obstacles):
     """
-    使用 Leaflet + CartoDB Voyager 地图（国内可访问）的独立组件。
-    用户可绘制多边形、设置名称和高度、管理障碍物列表，最后通过“保存到应用”按钮将数据传回 Streamlit。
+    完全前端的障碍物圈选组件，使用 Leaflet + OpenStreetMap。
+    用户绘制多边形、设置名称/高度、管理列表，最后通过 URL 参数同步回 Streamlit。
     """
     obstacles_json = json.dumps(existing_obstacles)
     
@@ -77,7 +77,7 @@ def leaflet_map_component(existing_obstacles):
     <html>
     <head>
         <meta charset="utf-8">
-        <title>Leaflet 障碍物圈选</title>
+        <title>障碍物圈选工具</title>
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -104,15 +104,13 @@ def leaflet_map_component(existing_obstacles):
             <button id="syncBtn">💾 保存到应用</button>
         </div>
         <script>
-            // 初始化地图，使用 CartoDB Voyager 底图（国内访问稳定）
+            // 初始化地图，中心点为学校坐标
             var map = L.map('map').setView([32.234097, 118.749413], 18);
-            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png', {{
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                subdomains: 'abcd',
-                maxZoom: 19
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
             }}).addTo(map);
             
-            // 存储障碍物的数组
+            // 存储障碍物数据
             var obstacles = {obstacles_json};
             var drawnItems = new L.FeatureGroup();
             map.addLayer(drawnItems);
@@ -189,15 +187,13 @@ def leaflet_map_component(existing_obstacles):
                 renderObstacles();
             }});
             
-            // 同步到应用
+            // 同步数据到 Streamlit（通过 URL 参数）
             document.getElementById('syncBtn').onclick = function() {{
                 var data = JSON.stringify(obstacles);
-                // 通过 URL 参数传递数据（Streamlit 可以读取 query_params）
                 var newUrl = window.location.href.split('?')[0] + '?obstacles=' + encodeURIComponent(data);
                 window.location.href = newUrl;
             }};
             
-            // 初始渲染
             renderObstacles();
         </script>
     </body>
@@ -207,7 +203,6 @@ def leaflet_map_component(existing_obstacles):
 
 # ==================== 从 URL 参数读取障碍物数据 ====================
 def load_obstacles_from_url():
-    """从 st.query_params 读取障碍物数据并更新 session_state"""
     params = st.query_params
     if 'obstacles' in params:
         try:
@@ -227,7 +222,6 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
-# 学校坐标
 SCHOOL_CENTER = (118.749413, 32.234097)
 
 if 'home_point' not in st.session_state:
@@ -242,24 +236,9 @@ if 'a_point' not in st.session_state:
 if 'b_point' not in st.session_state:
     st.session_state.b_point = (SCHOOL_CENTER[0] + 0.001, SCHOOL_CENTER[1] + 0.001)
 
-# 障碍物存储
 if 'obstacles' not in st.session_state:
-    # 示例障碍物
-    st.session_state.obstacles = [
-        {
-            'name': '教学楼A区',
-            'height': 20,
-            'points': [
-                (SCHOOL_CENTER[0] - 0.0004, SCHOOL_CENTER[1] - 0.0003),
-                (SCHOOL_CENTER[0] + 0.0004, SCHOOL_CENTER[1] - 0.0003),
-                (SCHOOL_CENTER[0] + 0.0004, SCHOOL_CENTER[1] + 0.0002),
-                (SCHOOL_CENTER[0] - 0.0004, SCHOOL_CENTER[1] + 0.0002)
-            ],
-            'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-        }
-    ]
+    st.session_state.obstacles = []   # 初始为空
 
-# 从 URL 加载新数据
 load_obstacles_from_url()
 
 # ==================== 侧边栏 ====================
@@ -322,7 +301,6 @@ if "飞行监控" in st.session_state.page:
     heartbeats, seq, _ = st.session_state.heartbeat_mgr.get_data()
     if heartbeats:
         df = pd.DataFrame(heartbeats)
-        # 心跳数据显示（略，保留原有代码）
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("总心跳数", len(df))
         col2.metric("当前序列号", seq)
@@ -373,5 +351,5 @@ else:
     else:
         st.warning("⚠️ 暂无航线，请在左侧设置起点和终点并点击「生成/更新航线」")
     
-    # 嵌入 Leaflet 地图组件
-    leaflet_map_component(st.session_state.obstacles)
+    # 嵌入独立地图组件
+    obstacle_map_component(st.session_state.obstacles)
