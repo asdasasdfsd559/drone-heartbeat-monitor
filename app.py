@@ -111,13 +111,14 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         tiles='OpenStreetMap'
     )
     
-    # 添加高德卫星图等图层（略）
+    # 添加高德卫星图作为可选图层
     folium.TileLayer(
         tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
         attr='高德地图',
         name='高德卫星图',
         control=True
     ).add_to(m)
+    
     folium.TileLayer(
         tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
         attr='高德地图',
@@ -131,8 +132,20 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             h_lng, h_lat = home_point[0], home_point[1]
         else:
             h_lng, h_lat = CoordTransform.wgs84_to_gcj02(home_point[0], home_point[1])
-        folium.Marker([h_lat, h_lng], popup='🏠 学校中心点', icon=folium.Icon(color='green', icon='home', prefix='fa')).add_to(m)
-        folium.Circle(radius=100, location=[h_lat, h_lng], color='green', fill=True, fill_opacity=0.15, weight=2).add_to(m)
+        
+        folium.Marker(
+            [h_lat, h_lng], 
+            popup='🏠 学校中心点', 
+            icon=folium.Icon(color='green', icon='home', prefix='fa')
+        ).add_to(m)
+        folium.Circle(
+            radius=100, 
+            location=[h_lat, h_lng], 
+            color='green', 
+            fill=True, 
+            fill_opacity=0.15, 
+            weight=2
+        ).add_to(m)
     
     # 航点
     if waypoints:
@@ -142,13 +155,24 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
                 wp_lng, wp_lat = wp[0], wp[1]
             else:
                 wp_lng, wp_lat = CoordTransform.wgs84_to_gcj02(wp[0], wp[1])
+            
             points.append([wp_lat, wp_lng])
             color = 'blue' if i < len(waypoints)-1 else 'red'
-            folium.Marker([wp_lat, wp_lng], popup=f'航点 {i+1}', icon=folium.Icon(color=color, icon='circle', prefix='fa')).add_to(m)
-            folium.map.Marker([wp_lat, wp_lng],
-                icon=folium.DivIcon(icon_size=(24,24), icon_anchor=(12,12),
-                html=f'<div style="font-size:12px; font-weight:bold; background:black; color:white; border-radius:50%; width:22px; height:22px; text-align:center; line-height:22px;">{i+1}</div>')
+            folium.Marker(
+                [wp_lat, wp_lng], 
+                popup=f'航点 {i+1}', 
+                icon=folium.Icon(color=color, icon='circle', prefix='fa')
             ).add_to(m)
+            
+            folium.map.Marker(
+                [wp_lat, wp_lng],
+                icon=folium.DivIcon(
+                    icon_size=(24, 24),
+                    icon_anchor=(12, 12),
+                    html=f'<div style="font-size: 12px; font-weight: bold; background: black; color: white; border-radius: 50%; width: 22px; height: 22px; text-align: center; line-height: 22px;">{i+1}</div>'
+                )
+            ).add_to(m)
+        
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
     # 已保存的障碍物
@@ -160,6 +184,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             else:
                 lng, lat = CoordTransform.wgs84_to_gcj02(point[0], point[1])
             polygon_points.append([lat, lng])
+        
         height = obs.get('height', 10)
         if height < 20:
             fill_color = '#ff9999'
@@ -167,10 +192,19 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             fill_color = '#ff6666'
         else:
             fill_color = '#ff3333'
-        folium.Polygon(locations=polygon_points, color='red', weight=3, fill=True, fill_color=fill_color, fill_opacity=0.5,
-                       popup=f"🚧 {obs['name']}<br>高度: {height}米", tooltip=f"{obs['name']} ({height}米)").add_to(m)
+        
+        folium.Polygon(
+            locations=polygon_points,
+            color='red',
+            weight=3,
+            fill=True,
+            fill_color=fill_color,
+            fill_opacity=0.5,
+            popup=f"🚧 {obs['name']}<br>高度: {height}米",
+            tooltip=f"{obs['name']} ({height}米)"
+        ).add_to(m)
     
-    # 关键修复：将绘图控件放在右上角，并确保启用
+    # 绘图工具 - 关键修改：将位置设置为右上角
     draw = plugins.Draw(
         draw_options={
             'polygon': {
@@ -185,13 +219,20 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             'circlemarker': False
         },
         edit_options={'edit': True, 'remove': True},
-        position='topright'   # 显式设置位置为右上角
+        position='topright'   # <--- 关键：控件放在右上角
     )
     draw.add_to(m)
     
     # 距离圆环
     for r in [50, 100, 200]:
-        folium.Circle(radius=r, location=[display_lat, display_lng], color='gray', fill=False, weight=1, opacity=0.4).add_to(m)
+        folium.Circle(
+            radius=r, 
+            location=[display_lat, display_lng], 
+            color='gray', 
+            fill=False, 
+            weight=1, 
+            opacity=0.4
+        ).add_to(m)
     
     folium.LayerControl().add_to(m)
     
@@ -330,7 +371,7 @@ with st.sidebar:
             st.rerun()
         
         st.markdown("---")
-        st.info("💡 使用地图右上角的多边形工具绘制区域，绘制后下方会弹出保存表单。")
+        st.info("💡 使用地图**右上角**的多边形工具绘制区域，绘制后下方会弹出保存表单。")
 
 # ==================== 主内容 ====================
 
