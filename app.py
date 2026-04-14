@@ -64,7 +64,7 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 独立地图组件（包含高度输入） ====================
+# ==================== 独立地图组件（绘制后立即弹窗输入名称和高度） ====================
 def obstacle_map_component():
     """
     使用 Leaflet + Leaflet.draw 的独立 HTML 组件。
