@@ -83,6 +83,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, pending
         tiles='OpenStreetMap'
     )
     
+    # 高德卫星图
     folium.TileLayer(
         'https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
         attr='高德地图',
@@ -90,10 +91,12 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, pending
         control=True
     ).add_to(m)
     
+    # Home点
     if home_point:
         folium.Marker([display_lat, display_lng], popup='🏠 学校中心点', icon=folium.Icon(color='green')).add_to(m)
         folium.Circle(radius=100, location=[display_lat, display_lng], color='green', fill=True, fill_opacity=0.15).add_to(m)
     
+    # 航点
     if waypoints:
         points = []
         for i, wp in enumerate(waypoints):
@@ -137,6 +140,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, pending
             tooltip="待保存"
         ).add_to(m)
     
+    # 绘图工具
     draw = plugins.Draw(
         draw_options={
             'polygon': {
@@ -164,6 +168,7 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
+# 学校坐标 (南京科技职业学院)
 if 'home_point' not in st.session_state:
     st.session_state.home_point = (118.749413, 32.234097)
 
@@ -179,6 +184,7 @@ if 'b_point' not in st.session_state:
 if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
+# 障碍物
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
@@ -188,7 +194,7 @@ if 'pending_polygon' not in st.session_state:
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
 
-# 保存用户输入的临时值，防止刷新丢失
+# 临时保存用户输入
 if 'temp_name' not in st.session_state:
     st.session_state.temp_name = ""
 if 'temp_height' not in st.session_state:
@@ -266,9 +272,9 @@ with st.sidebar:
         if st.session_state.pending_polygon:
             st.success(f"✏️ 已绘制多边形，共 {len(st.session_state.pending_polygon)} 个顶点")
         else:
-            st.info("📐 使用地图右上角的多边形工具绘制区域，绘制后自动捕获")
+            st.info("📐 使用地图右上角的多边形工具绘制区域")
         
-        # 输入框绑定到 session_state
+        # 输入框绑定 session_state
         new_name = st.text_input("障碍物名称", value=st.session_state.temp_name, key="new_name_input")
         new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=st.session_state.temp_height, step=5, key="new_height_input")
         st.session_state.temp_name = new_name
@@ -396,7 +402,7 @@ else:
             
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 检测新绘制的多边形
+            # 处理新绘制的多边形
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
@@ -405,7 +411,7 @@ else:
                     if len(points) >= 3:
                         if st.session_state.pending_polygon != points:
                             st.session_state.pending_polygon = points
-                            st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点。请填写名称和高度后保存。")
+                            st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点，请填写名称和高度后保存")
                             st.rerun()
             
             st.success("✅ 地图加载成功")
