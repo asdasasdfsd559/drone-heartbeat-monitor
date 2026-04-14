@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 import time
 import math
 import threading
+import json
+import base64
 from datetime import datetime, timezone, timedelta
 import folium
 from streamlit_folium import st_folium
@@ -74,7 +76,7 @@ def wgs84_to_gcj02(lng, lat):
 
 # ==================== 地图函数 ====================
 
-def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system, draw_data=None):
+def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
     """创建地图"""
     
     if coord_system == 'gcj02':
@@ -219,31 +221,22 @@ if 'pending_points' not in st.session_state:
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
 
-# 保存标志
-if 'save_flag' not in st.session_state:
-    st.session_state.save_flag = False
+# ==================== 处理URL参数中的多边形 ====================
 
-# ==================== 处理保存 ====================
-
-# 检查保存标志
-if st.session_state.save_flag and st.session_state.pending_points:
-    # 获取待保存的数据
-    points = st.session_state.pending_points
-    obs_name = st.session_state.get('temp_name', '')
-    obs_height = st.session_state.get('temp_height', 20)
-    
-    if obs_name:
-        st.session_state.obstacles.append({
-            'id': st.session_state.next_id,
-            'name': obs_name,
-            'height': obs_height,
-            'points': points,
-            'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-        })
-        st.session_state.next_id += 1
-        st.session_state.pending_points = None
-        st.session_state.save_flag = False
-        st.rerun()
+# 从URL获取多边形数据
+query_params = st.query_params
+if 'polygon' in query_params:
+    try:
+        polygon_json = base64.b64decode(query_params['polygon']).decode()
+        points = json.loads(polygon_json)
+        if len(points) >= 3:
+            st.session_state.pending_points = points
+            st.success(f"✅ 已接收多边形，共 {len(points)} 个顶点")
+            # 清除URL参数
+            st.query_params.clear()
+            st.rerun()
+    except:
+        pass
 
 # ==================== 侧边栏 ====================
 
@@ -324,23 +317,31 @@ with st.sidebar:
         # 显示临时多边形状态
         if st.session_state.pending_points:
             st.success(f"✅ 已绘制多边形，共 {len(st.session_state.pending_points)} 个顶点")
-            st.info("请输入名称和高度后点击保存")
         
         # 添加障碍物
         st.markdown("### ➕ 添加新障碍物")
         
-        temp_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="temp_name")
-        temp_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="temp_height")
+        new_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="new_name")
+        new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="new_height")
         
         if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
             if st.session_state.pending_points and len(st.session_state.pending_points) >= 3:
-                if temp_name:
-                    st.session_state.save_flag = True
+                if new_name:
+                    st.session_state.obstacles.append({
+                        'id': st.session_state.next_id,
+                        'name': new_name,
+                        'height': new_height,
+                        'points': st.session_state.pending_points,
+                        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    st.session_state.next_id += 1
+                    st.session_state.pending_points = None
+                    st.success(f"✅ 已添加障碍物: {new_name}")
                     st.rerun()
                 else:
                     st.error("请输入障碍物名称")
             else:
-                st.error("请先在地图上绘制多边形（至少3个顶点）")
+                st.error("请先在地图上绘制多边形")
         
         st.markdown("---")
         
@@ -458,15 +459,18 @@ else:
             
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 检测绘制完成的多边形
+            # 检测绘制完成的多边形 - 通过URL参数传递
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coordinates = draw_data['geometry']['coordinates'][0]
                     points = [(coord[0], coord[1]) for coord in coordinates]
                     if len(points) >= 3:
-                        st.session_state.pending_points = points
-                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在左侧输入名称和高度后保存")
+                        # 将多边形数据编码到URL
+                        points_json = json.dumps(points)
+                        points_b64 = base64.b64encode(points_json.encode()).decode()
+                        st.query_params["polygon"] = points_b64
+                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点")
                         st.rerun()
             
             st.success("✅ 地图加载成功")
