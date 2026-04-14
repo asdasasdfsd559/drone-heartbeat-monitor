@@ -64,10 +64,10 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 创建独立地图组件（无需注册） ====================
+# ==================== 创建独立地图组件（使用 CartoDB 瓦片，无需注册） ====================
 def leaflet_map_component(existing_obstacles):
     """
-    使用 Leaflet + OpenStreetMap 的完全前端地图组件。
+    使用 Leaflet + CartoDB Voyager 地图（国内可访问）的独立组件。
     用户可绘制多边形、设置名称和高度、管理障碍物列表，最后通过“保存到应用”按钮将数据传回 Streamlit。
     """
     obstacles_json = json.dumps(existing_obstacles)
@@ -104,10 +104,12 @@ def leaflet_map_component(existing_obstacles):
             <button id="syncBtn">💾 保存到应用</button>
         </div>
         <script>
-            // 初始化地图
+            // 初始化地图，使用 CartoDB Voyager 底图（国内访问稳定）
             var map = L.map('map').setView([32.234097, 118.749413], 18);
-            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png', {{
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
             }}).addTo(map);
             
             // 存储障碍物的数组
@@ -211,9 +213,7 @@ def load_obstacles_from_url():
         try:
             data = json.loads(params['obstacles'])
             if isinstance(data, list):
-                # 更新现有障碍物（合并或替换，这里直接替换）
                 st.session_state.obstacles = data
-                # 清除参数，避免重复加载
                 st.query_params.clear()
                 st.rerun()
         except:
@@ -308,7 +308,6 @@ with st.sidebar:
         st.subheader("🚧 障碍物管理")
         st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # 显示当前障碍物列表
         if st.session_state.obstacles:
             for i, obs in enumerate(st.session_state.obstacles):
                 st.write(f"{i+1}. {obs['name']} (高度: {obs['height']}米)")
@@ -323,6 +322,7 @@ if "飞行监控" in st.session_state.page:
     heartbeats, seq, _ = st.session_state.heartbeat_mgr.get_data()
     if heartbeats:
         df = pd.DataFrame(heartbeats)
+        # 心跳数据显示（略，保留原有代码）
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("总心跳数", len(df))
         col2.metric("当前序列号", seq)
@@ -364,7 +364,6 @@ else:
     st.header("🗺️ 航线规划 - 多边形圈选障碍物")
     st.caption("使用下方地图工具绘制多边形，绘制后弹出对话框设置名称和高度，可管理障碍物列表，最后点击「保存到应用」同步数据。")
     
-    # 显示简单地图信息
     if st.session_state.waypoints:
         a, b = st.session_state.waypoints
         dx = (b[0] - a[0]) * 111000 * math.cos(math.radians((a[1] + b[1]) / 2))
