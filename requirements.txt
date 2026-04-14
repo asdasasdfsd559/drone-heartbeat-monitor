@@ -4,4 +4,4 @@ plotly>=5.17.0
 folium>=0.14.0
 streamlit-folium>=0.15.0
 numpy>=1.24.0
-leafmap
+leafmap>=0.28.0
