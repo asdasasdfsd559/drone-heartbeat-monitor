@@ -18,10 +18,6 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 def get_beijing_time():
     return datetime.now(BEIJING_TZ)
 
-def get_beijing_time_ms():
-    now = get_beijing_time()
-    return now.strftime("%H:%M:%S.%f")[:-3]
-
 # ==================== 独立心跳线程 ====================
 
 class HeartbeatManager:
@@ -89,15 +85,11 @@ class CoordTransform:
     @staticmethod
     def wgs84_to_gcj02(lng, lat):
         return lng + 0.0005, lat + 0.0003
-    
-    @staticmethod
-    def gcj02_to_wgs84(lng, lat):
-        return lng - 0.0005, lat - 0.0003
 
 # ==================== 地图函数 ====================
 
-def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
-    """创建带多边形绘制功能的地图"""
+def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
+    """创建地图"""
     
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
@@ -111,20 +103,6 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         tiles='OpenStreetMap'
     )
     
-    folium.TileLayer(
-        tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-        attr='高德地图',
-        name='高德卫星图',
-        control=True
-    ).add_to(m)
-    
-    folium.TileLayer(
-        tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-        attr='高德地图',
-        name='高德街道图',
-        control=True
-    ).add_to(m)
-    
     # Home点
     if home_point:
         if coord_system == 'gcj02':
@@ -132,19 +110,8 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         else:
             h_lng, h_lat = CoordTransform.wgs84_to_gcj02(home_point[0], home_point[1])
         
-        folium.Marker(
-            [h_lat, h_lng], 
-            popup='🏠 学校中心点', 
-            icon=folium.Icon(color='green', icon='home', prefix='fa')
-        ).add_to(m)
-        folium.Circle(
-            radius=100, 
-            location=[h_lat, h_lng], 
-            color='green', 
-            fill=True, 
-            fill_opacity=0.15, 
-            weight=2
-        ).add_to(m)
+        folium.Marker([h_lat, h_lng], popup='🏠 学校中心点', icon=folium.Icon(color='green', icon='home', prefix='fa')).add_to(m)
+        folium.Circle(radius=100, location=[h_lat, h_lng], color='green', fill=True, fill_opacity=0.15, weight=2).add_to(m)
     
     # 航点
     if waypoints:
@@ -157,11 +124,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             
             points.append([wp_lat, wp_lng])
             color = 'blue' if i < len(waypoints)-1 else 'red'
-            folium.Marker(
-                [wp_lat, wp_lng], 
-                popup=f'航点 {i+1}', 
-                icon=folium.Icon(color=color, icon='circle', prefix='fa')
-            ).add_to(m)
+            folium.Marker([wp_lat, wp_lng], popup=f'航点 {i+1}', icon=folium.Icon(color=color, icon='circle', prefix='fa')).add_to(m)
             
             folium.map.Marker(
                 [wp_lat, wp_lng],
@@ -222,14 +185,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
     draw.add_to(m)
     
     for r in [50, 100, 200]:
-        folium.Circle(
-            radius=r, 
-            location=[display_lat, display_lng], 
-            color='gray', 
-            fill=False, 
-            weight=1, 
-            opacity=0.4
-        ).add_to(m)
+        folium.Circle(radius=r, location=[display_lat, display_lng], color='gray', fill=False, weight=1, opacity=0.4).add_to(m)
     
     folium.LayerControl().add_to(m)
     
@@ -259,16 +215,17 @@ if 'b_point' not in st.session_state:
 if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
+# 障碍物数据
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
-# 临时存储绘制的多边形
-if 'temp_polygon' not in st.session_state:
-    st.session_state.temp_polygon = None
+# 新增：临时存储新绘制的多边形
+if 'new_polygon' not in st.session_state:
+    st.session_state.new_polygon = None
 
-# 编辑状态
-if 'editing_id' not in st.session_state:
-    st.session_state.editing_id = None
+# 新增：编辑中的障碍物
+if 'editing_obstacle' not in st.session_state:
+    st.session_state.editing_obstacle = None
 
 # ==================== 侧边栏 ====================
 
@@ -344,89 +301,107 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("🚧 障碍物管理")
         
-        st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
+        # 显示当前障碍物数量
+        st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # 显示当前临时多边形状态
-        if st.session_state.temp_polygon:
-            st.success(f"📐 已绘制多边形: {len(st.session_state.temp_polygon)} 个顶点")
+        # ========== 添加新障碍物 ==========
+        st.markdown("### ➕ 添加新障碍物")
         
-        # 添加障碍物
-        st.markdown("**添加新障碍物:**")
-        new_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="new_name")
-        new_height = st.number_input("障碍物高度 (米)", min_value=1, max_value=200, value=20, step=5, key="new_height")
+        # 显示绘制状态
+        if st.session_state.new_polygon:
+            st.success(f"✅ 已绘制多边形，共 {len(st.session_state.new_polygon)} 个顶点")
         
-        if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
-            if st.session_state.temp_polygon and len(st.session_state.temp_polygon) >= 3:
-                new_id = len(st.session_state.obstacles) + 1
-                new_obs = {
-                    'id': new_id,
-                    'name': new_name if new_name else f"障碍物{new_id}",
-                    'height': new_height,
-                    'points': st.session_state.temp_polygon,
-                    'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                st.session_state.obstacles.append(new_obs)
-                st.session_state.temp_polygon = None
-                st.success(f"✅ 已添加障碍物: {new_obs['name']}")
-                st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("名称", placeholder="例如: 教学楼", key="new_name")
+        with col2:
+            new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="new_height")
+        
+        if st.button("💾 保存新障碍物", key="save_new", use_container_width=True):
+            if st.session_state.new_polygon and len(st.session_state.new_polygon) >= 3:
+                if not new_name:
+                    st.error("请输入障碍物名称")
+                else:
+                    new_id = len(st.session_state.obstacles) + 1
+                    st.session_state.obstacles.append({
+                        'id': new_id,
+                        'name': new_name,
+                        'height': new_height,
+                        'points': st.session_state.new_polygon,
+                        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    st.session_state.new_polygon = None
+                    st.success(f"✅ 已添加障碍物: {new_name}")
+                    st.rerun()
             else:
-                st.error("请先在地图上绘制多边形（至少3个顶点）")
+                st.error("请先在地图上绘制多边形")
         
         st.markdown("---")
         
-        # 修改障碍物
+        # ========== 修改障碍物 ==========
         if st.session_state.obstacles:
-            st.subheader("✏️ 修改障碍物")
+            st.markdown("### ✏️ 修改障碍物")
             
-            obs_options = [f"{o['id']}. {o['name']}" for o in st.session_state.obstacles]
+            obs_options = [f"{o['id']}. {o['name']} (高度:{o['height']}米)" for o in st.session_state.obstacles]
             selected = st.selectbox("选择障碍物", obs_options, key="edit_select")
             
             if selected:
                 obs_id = int(selected.split('.')[0])
                 target = next(o for o in st.session_state.obstacles if o['id'] == obs_id)
                 
-                edit_name = st.text_input("名称", value=target['name'], key="edit_name")
-                edit_height = st.number_input("高度(米)", value=target['height'], key="edit_height")
-                
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("保存修改", key="save_edit"):
+                    edit_name = st.text_input("新名称", value=target['name'], key="edit_name")
+                with col2:
+                    edit_height = st.number_input("新高度", value=target['height'], key="edit_height")
+                
+                # 显示编辑多边形状态
+                if st.session_state.editing_obstacle == obs_id:
+                    if st.session_state.new_polygon:
+                        st.success(f"✅ 已绘制新多边形，共 {len(st.session_state.new_polygon)} 个顶点")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("💾 保存信息", key="save_info"):
                         target['name'] = edit_name
                         target['height'] = edit_height
                         st.success("已更新")
                         st.rerun()
-                
                 with col2:
-                    if st.button("更新多边形", key="update_poly"):
-                        st.session_state.editing_id = obs_id
+                    if st.button("🔄 更新多边形", key="edit_poly"):
+                        st.session_state.editing_obstacle = obs_id
                         st.info("请在地图上重新绘制多边形")
-                
-                if st.session_state.editing_id == obs_id and st.session_state.temp_polygon:
-                    if st.button("确认更新多边形", key="confirm_update"):
-                        target['points'] = st.session_state.temp_polygon
-                        target['name'] = edit_name
-                        target['height'] = edit_height
-                        st.session_state.temp_polygon = None
-                        st.session_state.editing_id = None
-                        st.success("多边形已更新")
                         st.rerun()
+                with col3:
+                    if st.session_state.editing_obstacle == obs_id and st.session_state.new_polygon:
+                        if st.button("✅ 确认更新", key="confirm_poly"):
+                            target['points'] = st.session_state.new_polygon
+                            target['name'] = edit_name
+                            target['height'] = edit_height
+                            st.session_state.new_polygon = None
+                            st.session_state.editing_obstacle = None
+                            st.success("多边形已更新")
+                            st.rerun()
         
         st.markdown("---")
-        st.subheader("🗑️ 删除障碍物")
         
+        # ========== 删除障碍物 ==========
         if st.session_state.obstacles:
+            st.markdown("### 🗑️ 删除障碍物")
+            
             del_options = [f"{o['id']}. {o['name']}" for o in st.session_state.obstacles]
             del_selected = st.selectbox("选择要删除的障碍物", del_options, key="del_select")
             
-            if st.button("删除", key="delete_btn"):
+            if st.button("🗑️ 删除", key="delete_btn", use_container_width=True):
                 del_id = int(del_selected.split('.')[0])
                 st.session_state.obstacles = [o for o in st.session_state.obstacles if o['id'] != del_id]
                 st.success("已删除")
                 st.rerun()
         
-        if st.button("清空所有障碍物", key="clear_all"):
+        if st.button("🗑️ 清空所有障碍物", key="clear_all", use_container_width=True):
             st.session_state.obstacles = []
-            st.session_state.temp_polygon = None
+            st.session_state.new_polygon = None
+            st.session_state.editing_obstacle = None
             st.success("已清空")
             st.rerun()
 
@@ -517,7 +492,7 @@ else:
             else:
                 center_lng, center_lat = st.session_state.home_point
             
-            m = create_map_with_drawing(
+            m = create_map(
                 center_lng, center_lat,
                 st.session_state.waypoints,
                 st.session_state.home_point,
@@ -527,15 +502,15 @@ else:
             
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 检测绘制完成的多边形 - 直接存储到 temp_polygon
+            # 检测绘制完成的多边形
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coordinates = draw_data['geometry']['coordinates'][0]
                     points = [(coord[0], coord[1]) for coord in coordinates]
                     if len(points) >= 3:
-                        st.session_state.temp_polygon = points
-                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在左侧输入名称和高度后点击「保存障碍物」")
+                        st.session_state.new_polygon = points
+                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点")
                         st.rerun()
             
             st.success("✅ 地图加载成功")
@@ -546,17 +521,20 @@ else:
                 1. 点击地图右上角的 📐 多边形绘制按钮
                 2. 在地图上依次点击各个顶点（至少3个点）
                 3. 双击鼠标完成绘制
-                4. 在左侧边栏输入障碍物名称和高度
-                5. 点击「保存障碍物」
+                4. 在左侧边栏输入名称和高度
+                5. 点击「保存新障碍物」
                 
                 **修改障碍物：**
-                - 在左侧边栏选择障碍物，修改名称/高度后点击「保存修改」
-                - 修改多边形：点击「更新多边形」→ 重新绘制 → 「确认更新多边形」
+                - 选择要修改的障碍物
+                - 修改名称/高度后点击「保存信息」
+                - 修改多边形：点击「更新多边形」→ 重新绘制 → 「确认更新」
+                
+                **删除障碍物：**
+                - 选择要删除的障碍物，点击「删除」
                 """)
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
-            st.info("请刷新页面重试")
 
 time.sleep(0.5)
 st.rerun()
