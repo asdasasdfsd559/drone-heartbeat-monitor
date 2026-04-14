@@ -104,21 +104,28 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
     else:
         display_lng, display_lat = center_lng, center_lat
     
+    # 使用 OpenStreetMap 作为底图（稳定，无需attribution问题）
     m = folium.Map(
         location=[display_lat, display_lng],
         zoom_start=18,
         control_scale=True,
-        tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-        attr='高德地图'
+        tiles='OpenStreetMap'
     )
     
+    # 添加高德卫星图作为可选图层（带正确的attribution）
     folium.TileLayer(
-        'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-        name='高德街道图',
+        tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+        attr='高德地图',
+        name='高德卫星图',
         control=True
     ).add_to(m)
     
-    folium.TileLayer('OpenStreetMap', name='OSM街道图', control=True).add_to(m)
+    folium.TileLayer(
+        tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+        attr='高德地图',
+        name='高德街道图',
+        control=True
+    ).add_to(m)
     
     # Home点
     if home_point:
@@ -127,8 +134,19 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         else:
             h_lng, h_lat = CoordTransform.wgs84_to_gcj02(home_point[0], home_point[1])
         
-        folium.Marker([h_lat, h_lng], popup='🏠 学校中心点', icon=folium.Icon(color='green', icon='home', prefix='fa')).add_to(m)
-        folium.Circle(radius=100, location=[h_lat, h_lng], color='green', fill=True, fill_opacity=0.15, weight=2).add_to(m)
+        folium.Marker(
+            [h_lat, h_lng], 
+            popup='🏠 学校中心点', 
+            icon=folium.Icon(color='green', icon='home', prefix='fa')
+        ).add_to(m)
+        folium.Circle(
+            radius=100, 
+            location=[h_lat, h_lng], 
+            color='green', 
+            fill=True, 
+            fill_opacity=0.15, 
+            weight=2
+        ).add_to(m)
     
     # 航点
     if waypoints:
@@ -141,7 +159,11 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             
             points.append([wp_lat, wp_lng])
             color = 'blue' if i < len(waypoints)-1 else 'red'
-            folium.Marker([wp_lat, wp_lng], popup=f'航点 {i+1}', icon=folium.Icon(color=color, icon='circle', prefix='fa')).add_to(m)
+            folium.Marker(
+                [wp_lat, wp_lng], 
+                popup=f'航点 {i+1}', 
+                icon=folium.Icon(color=color, icon='circle', prefix='fa')
+            ).add_to(m)
             
             folium.map.Marker(
                 [wp_lat, wp_lng],
@@ -201,8 +223,16 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
     )
     draw.add_to(m)
     
+    # 距离圆环
     for r in [50, 100, 200]:
-        folium.Circle(radius=r, location=[display_lat, display_lng], color='gray', fill=False, weight=1, opacity=0.4).add_to(m)
+        folium.Circle(
+            radius=r, 
+            location=[display_lat, display_lng], 
+            color='gray', 
+            fill=False, 
+            weight=1, 
+            opacity=0.4
+        ).add_to(m)
     
     folium.LayerControl().add_to(m)
     
@@ -237,8 +267,8 @@ if 'coord_system' not in st.session_state:
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
-if 'draw_count' not in st.session_state:
-    st.session_state.draw_count = 0
+if 'temp_draw_data' not in st.session_state:
+    st.session_state.temp_draw_data = None
 
 # ==================== 侧边栏 ====================
 
@@ -324,24 +354,21 @@ with st.sidebar:
         st.caption("💡 请先在地图上使用多边形工具绘制区域，然后点击下方按钮保存")
         
         if st.button("💾 保存当前绘制的多边形", key="save_obs_btn"):
-            if 'temp_draw_data' in st.session_state and st.session_state.temp_draw_data:
+            if st.session_state.temp_draw_data and len(st.session_state.temp_draw_data) >= 3:
                 points = st.session_state.temp_draw_data
-                if len(points) >= 3:
-                    new_obs = {
-                        'id': len(st.session_state.obstacles) + 1,
-                        'name': obs_name if obs_name else f"障碍物{len(st.session_state.obstacles)+1}",
-                        'height': obs_height,
-                        'points': points,
-                        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    st.session_state.obstacles.append(new_obs)
-                    st.session_state.temp_draw_data = None
-                    st.success(f"已添加障碍物: {new_obs['name']} (高度:{obs_height}米)")
-                    st.rerun()
-                else:
-                    st.error("多边形至少需要3个顶点")
+                new_obs = {
+                    'id': len(st.session_state.obstacles) + 1,
+                    'name': obs_name if obs_name else f"障碍物{len(st.session_state.obstacles)+1}",
+                    'height': obs_height,
+                    'points': points,
+                    'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.session_state.obstacles.append(new_obs)
+                st.session_state.temp_draw_data = None
+                st.success(f"已添加障碍物: {new_obs['name']} (高度:{obs_height}米)")
+                st.rerun()
             else:
-                st.warning("请先在地图上绘制多边形")
+                st.warning("请先在地图上绘制多边形（至少3个顶点）")
         
         st.markdown("---")
         st.subheader("🗑️ 删除障碍物")
@@ -469,7 +496,7 @@ else:
                     points = [(coord[0], coord[1]) for coord in coordinates]
                     if len(points) >= 3:
                         st.session_state.temp_draw_data = points
-                        st.success(f"已绘制多边形，共 {len(points)} 个顶点，请在侧边栏设置名称和高度后保存")
+                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在侧边栏设置名称和高度后保存")
                         st.rerun()
             
             st.success("✅ 地图加载成功")
@@ -487,10 +514,15 @@ else:
                 - 🟢 浅红色：高度 < 20米
                 - 🟡 中红色：高度 20-50米
                 - 🔴 深红色：高度 > 50米
+                
+                **地图图层：**
+                - 默认显示街道地图
+                - 右上角可切换高德卫星图/街道图
                 """)
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
+            st.info("请刷新页面重试")
 
 # 每0.5秒刷新
 time.sleep(0.5)
