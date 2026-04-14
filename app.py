@@ -95,7 +95,7 @@ class CoordTransform:
     def gcj02_to_wgs84(lng, lat):
         return lng - 0.0005, lat - 0.0003
 
-# ==================== 地图函数（带多边形绘制） ====================
+# ==================== 地图函数 ====================
 
 def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
     """创建带多边形绘制功能的地图"""
@@ -163,9 +163,8 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
-    # ========== 添加障碍物（多边形）- 不添加中心标记 ==========
+    # 添加障碍物（多边形）
     for i, obstacle in enumerate(obstacles):
-        # 转换坐标
         polygon_points = []
         for point in obstacle['points']:
             if coord_system == 'gcj02':
@@ -174,18 +173,27 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
                 lng, lat = CoordTransform.wgs84_to_gcj02(point[0], point[1])
             polygon_points.append([lat, lng])
         
-        # 只绘制多边形，不添加中心标记
+        # 根据高度设置不同颜色（高度越高颜色越深）
+        height = obstacle.get('height', 10)
+        if height < 20:
+            fill_color = '#ff9999'
+        elif height < 50:
+            fill_color = '#ff6666'
+        else:
+            fill_color = '#ff3333'
+        
         folium.Polygon(
             locations=polygon_points,
             color='red',
             weight=3,
             fill=True,
-            fill_opacity=0.4,
-            popup=f"🚧 {obstacle['name']}",
-            tooltip=f"{obstacle['name']}"
+            fill_color=fill_color,
+            fill_opacity=0.5,
+            popup=f"🚧 {obstacle['name']}<br>高度: {height}米",
+            tooltip=f"{obstacle['name']} ({height}米)"
         ).add_to(m)
     
-    # 添加多边形绘制工具（Draw插件）
+    # 添加多边形绘制工具
     draw = plugins.Draw(
         draw_options={
             'polygon': {
@@ -237,22 +245,12 @@ if 'b_point' not in st.session_state:
 if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
-# ========== 障碍物存储（带记忆功能） ==========
+# ========== 障碍物存储 ==========
 if 'obstacles' not in st.session_state:
-    # 预设一个示例障碍物（教学楼区域）
-    st.session_state.obstacles = [
-        {
-            'id': 0,
-            'name': '教学楼A区',
-            'points': [
-                (118.749000, 32.233800),
-                (118.749500, 32.233800),
-                (118.749500, 32.234200),
-                (118.749000, 32.234200)
-            ],
-            'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-        }
-    ]
+    st.session_state.obstacles = []
+
+if 'pending_obstacle' not in st.session_state:
+    st.session_state.pending_obstacle = None
 
 if 'next_obstacle_id' not in st.session_state:
     st.session_state.next_obstacle_id = 1
@@ -334,13 +332,45 @@ with st.sidebar:
         # 显示当前障碍物数量
         st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
         
+        # 待确认的障碍物
+        if st.session_state.pending_obstacle:
+            st.warning(f"待确认障碍物: {len(st.session_state.pending_obstacle['points'])} 个顶点")
+            
+            obs_height = st.number_input(
+                "障碍物高度 (米)", 
+                min_value=1, 
+                max_value=200, 
+                value=st.session_state.pending_obstacle.get('height', 20),
+                step=5,
+                key="obs_height"
+            )
+            obs_name = st.text_input("障碍物名称", value=st.session_state.pending_obstacle.get('name', f"障碍物{st.session_state.next_obstacle_id}"), key="obs_name")
+            
+            col_confirm, col_cancel = st.columns(2)
+            with col_confirm:
+                if st.button("✅ 确认添加", key="confirm_obstacle"):
+                    st.session_state.pending_obstacle['name'] = obs_name
+                    st.session_state.pending_obstacle['height'] = obs_height
+                    st.session_state.pending_obstacle['id'] = st.session_state.next_obstacle_id
+                    st.session_state.pending_obstacle['created_at'] = get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                    st.session_state.obstacles.append(st.session_state.pending_obstacle)
+                    st.session_state.next_obstacle_id += 1
+                    st.session_state.pending_obstacle = None
+                    st.success("障碍物已添加")
+                    st.rerun()
+            with col_cancel:
+                if st.button("❌ 取消", key="cancel_obstacle"):
+                    st.session_state.pending_obstacle = None
+                    st.rerun()
+        
         st.markdown("---")
         st.subheader("🗑️ 删除障碍物")
         
         if st.session_state.obstacles:
+            obs_options = [f"{i+1}. {o['name']} (高度:{o.get('height',10)}米)" for i, o in enumerate(st.session_state.obstacles)]
             obs_to_delete = st.selectbox(
                 "选择要删除的障碍物",
-                options=[f"{i+1}. {o['name']}" for i, o in enumerate(st.session_state.obstacles)],
+                options=obs_options,
                 key="obs_to_delete"
             )
             
@@ -352,7 +382,8 @@ with st.sidebar:
         
         if st.button("🗑️ 清空所有障碍物", key="clear_all_obs"):
             st.session_state.obstacles = []
-            st.session_state.next_obstacle_id = 0
+            st.session_state.pending_obstacle = None
+            st.session_state.next_obstacle_id = 1
             st.success("已清空所有障碍物")
             st.rerun()
 
@@ -457,7 +488,6 @@ if "飞行监控" in st.session_state.page:
 else:
     # ==================== 航线规划页面 ====================
     st.header("🗺️ 航线规划 - 南京科技职业学院")
-    st.caption("🎨 使用右侧工具栏的多边形工具绘制障碍物区域（红色区域）")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -471,7 +501,8 @@ else:
             st.warning("⚠️ 暂无航线，请设置起点和终点后点击「生成航线」")
         
         # 显示障碍物统计
-        st.info(f"🚧 障碍物数量: {len(st.session_state.obstacles)}")
+        total_height = sum(o.get('height', 0) for o in st.session_state.obstacles)
+        st.info(f"🚧 障碍物数量: {len(st.session_state.obstacles)} | 总高度: {total_height}米")
     
     st.markdown("---")
     
@@ -497,30 +528,40 @@ else:
             # 显示地图并获取绘制数据
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 处理绘制完成的多边形
-            if output and output.get('last_draw') is not None:
+            # 处理绘制完成的多边形（不自动保存，而是暂存）
+            if output and output.get('last_draw') is not None and st.session_state.pending_obstacle is None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
-                    # 获取多边形顶点坐标
                     coordinates = draw_data['geometry']['coordinates'][0]
-                    # 转换为 (lng, lat) 格式
                     points = [(coord[0], coord[1]) for coord in coordinates]
                     
-                    # 保存障碍物
-                    new_obstacle = {
-                        'id': st.session_state.next_obstacle_id,
-                        'name': f"障碍物{st.session_state.next_obstacle_id + 1}",
+                    # 暂存待确认的障碍物
+                    st.session_state.pending_obstacle = {
+                        'name': f"障碍物{st.session_state.next_obstacle_id}",
                         'points': points,
-                        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                        'height': 20,
+                        'created_at': None
                     }
-                    st.session_state.obstacles.append(new_obstacle)
-                    st.session_state.next_obstacle_id += 1
-                    st.success(f"✅ 已添加障碍物: {new_obstacle['name']}")
                     st.rerun()
             
             st.success("✅ 高德卫星地图加载成功")
             st.caption("📸 地图类型：高德卫星图 + 道路标注")
-            st.info("🎨 使用地图右上角的绘制工具，点击多边形图标后在地图上点击画区域，双击完成绘制")
+            
+            # 绘制说明
+            with st.expander("📖 障碍物绘制说明", expanded=False):
+                st.markdown("""
+                **如何添加障碍物：**
+                1. 点击地图右上角的 📐 多边形绘制工具
+                2. 在地图上点击各个顶点画出障碍物区域
+                3. 双击完成绘制
+                4. 在左侧边栏设置障碍物名称和高度
+                5. 点击「确认添加」保存障碍物
+                
+                **障碍物颜色说明：**
+                - 🟢 浅红色：高度 < 20米
+                - 🟡 中红色：高度 20-50米  
+                - 🔴 深红色：高度 > 50米
+                """)
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
@@ -529,15 +570,13 @@ else:
     # 显示障碍物列表
     if st.session_state.obstacles:
         st.markdown("---")
-        st.subheader("🚧 当前障碍物列表")
+        st.subheader("🚧 已保存的障碍物列表")
         
         for i, obs in enumerate(st.session_state.obstacles):
-            with st.expander(f"障碍物 {i+1}: {obs['name']}"):
+            with st.expander(f"障碍物 {i+1}: {obs['name']} (高度: {obs.get('height', 10)}米)"):
                 st.write(f"**创建时间:** {obs['created_at']}")
                 st.write(f"**顶点数量:** {len(obs['points'])} 个")
-                st.write(f"**顶点坐标:**")
-                for j, point in enumerate(obs['points']):
-                    st.write(f"  - 点{j+1}: ({point[0]:.6f}, {point[1]:.6f})")
+                st.write(f"**高度:** {obs.get('height', 10)} 米")
     
     # 航线信息
     if st.session_state.waypoints and len(st.session_state.waypoints) >= 2:
