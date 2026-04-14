@@ -66,11 +66,20 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 内嵌圈选组件（使用字符串格式化避免冲突） ====================
-def obstacle_editor_component():
-    obstacles_json = json.dumps(st.session_state.get('obstacles', []))
-    # 使用 format 方法避免 f-string 与 JS 模板字符串冲突
-    map_html = """
+# ==================== 内嵌绘图工具（完全前端实现） ====================
+def drawing_tool():
+    """
+    返回一个独立的 HTML 组件，包含：
+    - 地图（高德卫星图）
+    - 多边形绘制工具（Leaflet.draw）
+    - 左侧面板：障碍物列表（名称、高度），支持删除
+    - 按钮：保存到应用
+    """
+    # 读取当前已保存的障碍物（如果有）
+    obstacles = st.session_state.get('obstacles', [])
+    obstacles_json = json.dumps(obstacles)
+    
+    map_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -81,53 +90,104 @@ def obstacle_editor_component():
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
         <style>
-            body, html, #map { height: 500px; width: 100%; margin: 0; padding: 0; }
-            .controls {
-                position: absolute; bottom: 20px; left: 10px; z-index: 1000;
-                background: white; padding: 8px; border-radius: 8px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.2); font-size: 12px;
-                max-width: 250px;
-            }
-            .obstacle-list { max-height: 150px; overflow-y: auto; margin-top: 5px; }
-            .obstacle-item { padding: 3px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
-            button { margin: 2px; padding: 4px 8px; cursor: pointer; }
-            .draw-btn { background: #1890ff; color: white; border: none; border-radius: 4px; padding: 6px 12px; margin-bottom: 8px; width: 100%; }
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body, html, #map {{ height: 100%; width: 100%; }}
+            .toolbar {{
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                z-index: 1000;
+                background: white;
+                padding: 10px;
+                border-radius: 8px;
+                box-shadow: 0 0 15px rgba(0,0,0,0.2);
+                width: 260px;
+                max-height: 80%;
+                overflow-y: auto;
+                font-family: sans-serif;
+            }}
+            .toolbar h3 {{
+                margin: 0 0 8px 0;
+                font-size: 16px;
+            }}
+            .toolbar button {{
+                width: 100%;
+                margin: 5px 0;
+                padding: 6px;
+                cursor: pointer;
+                background: #1890ff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+            }}
+            .toolbar button.danger {{
+                background: #ff4d4f;
+            }}
+            .obstacle-list {{
+                margin-top: 10px;
+                max-height: 300px;
+                overflow-y: auto;
+            }}
+            .obstacle-item {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 5px;
+                border-bottom: 1px solid #eee;
+            }}
+            .obstacle-item button {{
+                width: auto;
+                padding: 2px 6px;
+                margin: 0;
+                background: #ff4d4f;
+            }}
+            .status {{
+                margin-top: 10px;
+                font-size: 12px;
+                color: #666;
+            }}
         </style>
     </head>
     <body>
         <div id="map"></div>
-        <div class="controls">
-            <button id="drawBtn" class="draw-btn">✏️ 开始绘制多边形</button>
-            <button id="syncBtn" style="background:#52c41a;">💾 保存到应用</button>
-            <div id="obstacleList" class="obstacle-list">
+        <div class="toolbar">
+            <h3>✏️ 障碍物管理</h3>
+            <button id="drawBtn">➕ 绘制多边形</button>
+            <button id="saveBtn" style="background:#52c41a;">💾 保存到应用</button>
+            <div class="obstacle-list" id="obstacleList">
                 <strong>已添加障碍物：</strong><br>
             </div>
+            <div class="status" id="status">状态：就绪</div>
         </div>
         <script>
-            var obstacles = {obstacles_json};
+            // 初始化地图（高德卫星图，国内可用）
             var map = L.map('map').setView([32.234097, 118.749413], 18);
-            // 使用高德卫星图（国内可用）
             L.tileLayer('https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {{
                 attribution: '高德地图',
                 maxZoom: 18
             }}).addTo(map);
             
+            // 障碍物数据
+            var obstacles = {obstacles_json};
             var drawnItems = new L.FeatureGroup();
             map.addLayer(drawnItems);
-            var drawControl = null;
+            var currentDrawControl = null;
             
+            // 渲染障碍物列表和地图上的多边形
             function render() {{
+                // 清除地图上的多边形
                 drawnItems.clearLayers();
-                obstacles.forEach(function(obs) {{
+                obstacles.forEach(function(obs, idx) {{
                     var latlngs = obs.points.map(function(p) {{ return [p[1], p[0]]; }});
-                    var poly = L.polygon(latlngs, {{ color: "red", weight: 3, fillColor: "#ff8888", fillOpacity: 0.5 }})
-                                .bindPopup(obs.name + " (" + obs.height + "米)");
+                    var poly = L.polygon(latlngs, {{
+                        color: "red",
+                        weight: 3,
+                        fillColor: "#ff8888",
+                        fillOpacity: 0.5
+                    }}).bindPopup(obs.name + " (" + obs.height + "米)");
                     drawnItems.addLayer(poly);
                 }});
-                updateList();
-            }}
-            
-            function updateList() {{
+                // 更新列表
                 var container = document.getElementById('obstacleList');
                 var html = '<strong>已添加障碍物：</strong><br>';
                 obstacles.forEach(function(obs, idx) {{
@@ -135,54 +195,82 @@ def obstacle_editor_component():
                             '<button onclick="removeObstacle(' + idx + ')">删除</button></div>';
                 }});
                 container.innerHTML = html;
+                document.getElementById('status').innerText = '状态：就绪，共 ' + obstacles.length + ' 个障碍物';
             }}
             
+            // 删除障碍物
             window.removeObstacle = function(idx) {{
                 obstacles.splice(idx, 1);
                 render();
             }};
             
+            // 开始绘制多边形
             function startDrawing() {{
-                if (drawControl) {{
-                    map.removeControl(drawControl);
+                // 移除已有的绘图控件
+                if (currentDrawControl) {{
+                    map.removeControl(currentDrawControl);
                 }}
-                drawControl = new L.Control.Draw({{
-                    draw: {{ polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false }},
-                    edit: {{ featureGroup: drawnItems, remove: true }}
+                currentDrawControl = new L.Control.Draw({{
+                    draw: {{
+                        polygon: true,
+                        polyline: false,
+                        rectangle: false,
+                        circle: false,
+                        marker: false,
+                        circlemarker: false
+                    }},
+                    edit: {{
+                        featureGroup: drawnItems,
+                        remove: true
+                    }}
                 }});
-                map.addControl(drawControl);
-                // 自动激活多边形绘制
-                new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+                map.addControl(currentDrawControl);
+                // 自动激活多边形绘制工具
+                new L.Draw.Polygon(map, currentDrawControl.options.draw.polygon).enable();
+                document.getElementById('status').innerText = '状态：正在绘制多边形，点击地图添加顶点，双击完成';
             }}
             
-            document.getElementById('drawBtn').onclick = startDrawing;
-            
+            // 监听绘制完成事件
             map.on(L.Draw.Event.CREATED, function(e) {{
                 var layer = e.layer;
                 var latlngs = layer.getLatLngs()[0];
                 var points = latlngs.map(function(ll) {{ return [ll.lng, ll.lat]; }});
                 var name = prompt("请输入障碍物名称", "新障碍物");
-                if (!name) return;
+                if (!name) {{
+                    document.getElementById('status').innerText = '状态：绘制已取消';
+                    if (currentDrawControl) map.removeControl(currentDrawControl);
+                    return;
+                }}
                 var height = parseInt(prompt("请输入高度（米）", "20"));
                 if (isNaN(height)) height = 20;
-                obstacles.push({{ name: name, height: height, points: points }});
+                obstacles.push({{
+                    name: name,
+                    height: height,
+                    points: points
+                }});
                 render();
-                // 绘制完成后移除绘图控件，避免干扰
-                if (drawControl) map.removeControl(drawControl);
+                // 绘制完成后移除绘图控件
+                if (currentDrawControl) map.removeControl(currentDrawControl);
+                document.getElementById('status').innerText = '状态：已添加障碍物 "' + name + '"';
             }});
             
-            document.getElementById('syncBtn').onclick = function() {{
+            // 保存到 Streamlit 应用
+            document.getElementById('saveBtn').onclick = function() {{
                 var data = JSON.stringify(obstacles);
+                // 通过 URL 参数传递
                 var newUrl = window.location.href.split('?')[0] + '?obstacles=' + encodeURIComponent(data);
                 window.location.href = newUrl;
             }};
             
+            document.getElementById('drawBtn').onclick = startDrawing;
+            
+            // 初始渲染
             render();
         </script>
     </body>
     </html>
-    """.replace("{obstacles_json}", obstacles_json)  # 替换 JSON 数据
-    return html(map_html, height=560)
+    """
+    return html(map_html, height=700)
 
 # ==================== 从 URL 参数读取障碍物 ====================
 def load_obstacles_from_url():
@@ -267,7 +355,7 @@ with st.sidebar:
             st.rerun()
         
         st.markdown("---")
-        st.info("💡 使用下方地图：点击「开始绘制多边形」按钮 → 在地图上点击顶点 → 双击完成 → 输入名称和高度 → 点击「保存到应用」")
+        st.info("💡 下方地图工具：点击「绘制多边形」→ 在地图上点击顶点 → 双击完成 → 输入名称和高度 → 点击「保存到应用」")
 
 # ==================== 主内容 ====================
 if "飞行监控" in st.session_state.page:
@@ -324,8 +412,8 @@ else:
     else:
         st.warning("⚠️ 请先在左侧设置起点和终点")
     
-    # 显示内嵌圈选组件
-    obstacle_editor_component()
+    # 显示绘图工具组件
+    drawing_tool()
     
     # 显示最终障碍物地图
     st.markdown("---")
