@@ -1,12 +1,13 @@
 import streamlit as st
+import folium
+from streamlit_folium import st_folium
+from folium import plugins
 import pandas as pd
 import plotly.graph_objects as go
 import time
 import math
 import threading
 from datetime import datetime, timezone, timedelta
-import json
-from streamlit.components.v1 import html
 
 st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", layout="wide")
 
@@ -64,157 +65,28 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 独立地图组件（无需注册） ====================
-def obstacle_map_component(existing_obstacles):
-    """
-    完全前端的障碍物圈选组件，使用 Leaflet + OpenStreetMap。
-    用户绘制多边形、设置名称/高度、管理列表，最后通过 URL 参数同步回 Streamlit。
-    """
-    obstacles_json = json.dumps(existing_obstacles)
+# ==================== 地图函数 ====================
+def create_map(center_lng, center_lat, obstacles):
+    m = folium.Map(location=[center_lat, center_lng], zoom_start=18, control_scale=True)
+    folium.TileLayer('https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', attr='高德地图', name='高德卫星图').add_to(m)
+    folium.TileLayer('OpenStreetMap', name='OSM街道图').add_to(m)
     
-    map_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>障碍物圈选工具</title>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
-        <style>
-            body, html, #map {{ height: 600px; width: 100%; margin: 0; padding: 0; }}
-            .info-panel {{ position: absolute; bottom: 20px; left: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.2); max-width: 300px; }}
-            .obstacle-list {{ max-height: 200px; overflow-y: auto; margin-top: 10px; }}
-            .obstacle-item {{ padding: 5px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }}
-            button {{ margin: 2px; padding: 4px 8px; }}
-        </style>
-    </head>
-    <body>
-        <div id="map"></div>
-        <div class="info-panel">
-            <strong>✏️ 操作说明</strong><br>
-            1. 点击右上角多边形工具 📐 绘制区域，双击完成。<br>
-            2. 绘制后弹出对话框设置名称和高度。<br>
-            3. 下方列表可删除障碍物。<br>
-            4. 点击「保存到应用」将数据同步回程序。
-            <div id="obstacleList" class="obstacle-list">
-                <strong>已添加障碍物：</strong><br>
-            </div>
-            <button id="syncBtn">💾 保存到应用</button>
-        </div>
-        <script>
-            // 初始化地图，中心点为学校坐标
-            var map = L.map('map').setView([32.234097, 118.749413], 18);
-            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            }}).addTo(map);
-            
-            // 存储障碍物数据
-            var obstacles = {obstacles_json};
-            var drawnItems = new L.FeatureGroup();
-            map.addLayer(drawnItems);
-            
-            // 渲染已保存的障碍物
-            function renderObstacles() {{
-                drawnItems.clearLayers();
-                obstacles.forEach(function(obs) {{
-                    var latlngs = obs.points.map(function(p) {{
-                        return [p[1], p[0]];
-                    }});
-                    var polygon = L.polygon(latlngs, {{
-                        color: "red",
-                        weight: 3,
-                        fillColor: "#ff8888",
-                        fillOpacity: 0.5
-                    }}).bindPopup(obs.name + " (" + obs.height + "米)");
-                    drawnItems.addLayer(polygon);
-                }});
-                updateObstacleList();
-            }}
-            
-            // 更新侧边栏列表
-            function updateObstacleList() {{
-                var container = document.getElementById('obstacleList');
-                var html = '<strong>已添加障碍物：</strong><br>';
-                obstacles.forEach(function(obs, idx) {{
-                    html += '<div class="obstacle-item">' + (idx+1) + '. ' + obs.name + ' (' + obs.height + '米) ' +
-                            '<button onclick="removeObstacle(' + idx + ')">删除</button></div>';
-                }});
-                container.innerHTML = html;
-            }}
-            
-            // 删除障碍物
-            window.removeObstacle = function(idx) {{
-                obstacles.splice(idx, 1);
-                renderObstacles();
-            }};
-            
-            // 绘图控件
-            var drawControl = new L.Control.Draw({{
-                draw: {{
-                    polygon: true,
-                    polyline: false,
-                    rectangle: false,
-                    circle: false,
-                    marker: false,
-                    circlemarker: false
-                }},
-                edit: {{
-                    featureGroup: drawnItems,
-                    remove: true
-                }}
-            }});
-            map.addControl(drawControl);
-            
-            // 监听新绘制的多边形
-            map.on(L.Draw.Event.CREATED, function(e) {{
-                var layer = e.layer;
-                var latlngs = layer.getLatLngs()[0];
-                var points = latlngs.map(function(ll) {{
-                    return [ll.lng, ll.lat];
-                }});
-                var name = prompt("请输入障碍物名称", "新障碍物");
-                if (!name) return;
-                var height = parseInt(prompt("请输入高度（米）", "20"));
-                if (isNaN(height)) height = 20;
-                var newObstacle = {{
-                    name: name,
-                    height: height,
-                    points: points
-                }};
-                obstacles.push(newObstacle);
-                renderObstacles();
-            }});
-            
-            // 同步数据到 Streamlit（通过 URL 参数）
-            document.getElementById('syncBtn').onclick = function() {{
-                var data = JSON.stringify(obstacles);
-                var newUrl = window.location.href.split('?')[0] + '?obstacles=' + encodeURIComponent(data);
-                window.location.href = newUrl;
-            }};
-            
-            renderObstacles();
-        </script>
-    </body>
-    </html>
-    """
-    return html(map_html, height=700)
+    # 绘制已保存的障碍物
+    for obs in obstacles:
+        points = [[p[1], p[0]] for p in obs['points']]
+        folium.Polygon(locations=points, color='red', weight=3, fill=True, fill_opacity=0.5,
+                       popup=f"{obs['name']} ({obs['height']}米)").add_to(m)
+    
+    # 绘图工具
+    draw = plugins.Draw(
+        draw_options={'polygon': True, 'polyline': False, 'rectangle': False, 'circle': False, 'marker': False, 'circlemarker': False},
+        edit_options={'edit': True, 'remove': True}
+    )
+    draw.add_to(m)
+    folium.LayerControl().add_to(m)
+    return m
 
-# ==================== 从 URL 参数读取障碍物数据 ====================
-def load_obstacles_from_url():
-    params = st.query_params
-    if 'obstacles' in params:
-        try:
-            data = json.loads(params['obstacles'])
-            if isinstance(data, list):
-                st.session_state.obstacles = data
-                st.query_params.clear()
-                st.rerun()
-        except:
-            pass
-
-# ==================== 初始化 session_state ====================
+# ==================== 初始化 ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr = HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -223,42 +95,30 @@ if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
 SCHOOL_CENTER = (118.749413, 32.234097)
-
 if 'home_point' not in st.session_state:
     st.session_state.home_point = SCHOOL_CENTER
-
 if 'waypoints' not in st.session_state:
     st.session_state.waypoints = []
-
 if 'a_point' not in st.session_state:
     st.session_state.a_point = SCHOOL_CENTER
-
 if 'b_point' not in st.session_state:
     st.session_state.b_point = (SCHOOL_CENTER[0] + 0.001, SCHOOL_CENTER[1] + 0.001)
-
 if 'obstacles' not in st.session_state:
-    st.session_state.obstacles = []   # 初始为空
-
-load_obstacles_from_url()
+    st.session_state.obstacles = []
+if 'temp_draw_data' not in st.session_state:
+    st.session_state.temp_draw_data = None
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
     st.title("🎮 无人机地面站")
     st.markdown("**南京科技职业学院**")
     
-    selected_page = st.radio(
-        "选择功能",
-        ["📡 飞行监控", "🗺️ 航线规划"],
-        index=0 if st.session_state.page == "飞行监控" else 1,
-        key="page_select"
-    )
+    selected_page = st.radio("选择功能", ["📡 飞行监控", "🗺️ 航线规划"], key="page_select")
     st.session_state.page = selected_page
     
     st.markdown("---")
-    
     status, time_since = st.session_state.heartbeat_mgr.get_connection_status()
     _, seq, _ = st.session_state.heartbeat_mgr.get_data()
-    
     if status == "在线":
         st.success(f"✅ 心跳正常 ({time_since:.1f}秒前)")
         st.metric("当前序列号", seq)
@@ -268,36 +128,29 @@ with st.sidebar:
     if "🗺️ 航线规划" in st.session_state.page:
         st.markdown("---")
         st.subheader("🏠 航线设置")
-        col1, col2 = st.columns(2)
-        with col1:
-            a_lng = st.number_input("起点经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
-            a_lat = st.number_input("起点纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
-        with col2:
-            b_lng = st.number_input("终点经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
-            b_lat = st.number_input("终点纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
-        
-        if st.button("✈️ 生成/更新航线", key="gen_route"):
+        a_lng = st.number_input("起点经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
+        a_lat = st.number_input("起点纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
+        b_lng = st.number_input("终点经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
+        b_lat = st.number_input("终点纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
+        if st.button("✈️ 生成/更新航线"):
             st.session_state.a_point = (a_lng, a_lat)
             st.session_state.b_point = (b_lng, b_lat)
             st.session_state.waypoints = [st.session_state.a_point, st.session_state.b_point]
-            st.success("航线已更新")
             st.rerun()
         
         st.markdown("---")
         st.subheader("🚧 障碍物管理")
-        st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
-        
+        st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
         if st.session_state.obstacles:
             for i, obs in enumerate(st.session_state.obstacles):
                 st.write(f"{i+1}. {obs['name']} (高度: {obs['height']}米)")
-        
-        st.markdown("---")
-        st.info("💡 请点击下方「打开地图编辑器」进行多边形圈选")
+        if st.button("🗑️ 清空所有障碍物"):
+            st.session_state.obstacles = []
+            st.rerun()
 
 # ==================== 主内容 ====================
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控 - 心跳数据")
-    st.caption("🕐 北京时间 (UTC+8)")
     heartbeats, seq, _ = st.session_state.heartbeat_mgr.get_data()
     if heartbeats:
         df = pd.DataFrame(heartbeats)
@@ -308,14 +161,14 @@ if "飞行监控" in st.session_state.page:
             intervals = [heartbeats[i]['timestamp'] - heartbeats[i-1]['timestamp'] for i in range(1, len(heartbeats))]
             avg_interval = sum(intervals) / len(intervals)
             st.metric("平均间隔", f"{avg_interval:.3f}秒")
-        status, time_since = st.session_state.heartbeat_mgr.get_connection_status()
+        status, ts = st.session_state.heartbeat_mgr.get_connection_status()
         col3.metric("连接状态", "✅ 在线" if status == "在线" else "❌ 离线")
         expected = seq
         received = len(df)
         loss_rate = (expected - received) / expected * 100 if expected > 0 else 0
         col4.metric("丢包率", f"{loss_rate:.1f}%")
         if status == "超时":
-            st.error(f"⚠️ 连接超时！已 {time_since:.1f} 秒未收到心跳")
+            st.error(f"⚠️ 超时！{ts:.1f}秒无心跳")
         if len(heartbeats) >= 2:
             fig_interval = go.Figure()
             intervals_data = [heartbeats[i]['timestamp'] - heartbeats[i-1]['timestamp'] for i in range(1, len(heartbeats))]
@@ -339,17 +192,56 @@ if "飞行监控" in st.session_state.page:
         st.info("等待心跳数据...")
 
 else:
-    st.header("🗺️ 航线规划 - 多边形圈选障碍物")
-    st.caption("使用下方地图工具绘制多边形，绘制后弹出对话框设置名称和高度，可管理障碍物列表，最后点击「保存到应用」同步数据。")
-    
+    st.header("🗺️ 航线规划 - 多边形圈选")
     if st.session_state.waypoints:
         a, b = st.session_state.waypoints
         dx = (b[0] - a[0]) * 111000 * math.cos(math.radians((a[1] + b[1]) / 2))
         dy = (b[1] - a[1]) * 111000
         distance = math.sqrt(dx*dx + dy*dy)
-        st.info(f"✈️ 当前航线：起点 → 终点，直线距离约 {distance:.1f} 米")
+        st.info(f"当前航线距离: {distance:.1f} 米")
     else:
-        st.warning("⚠️ 暂无航线，请在左侧设置起点和终点并点击「生成/更新航线」")
+        st.warning("请先在侧边栏设置起点和终点并生成航线")
     
-    # 嵌入独立地图组件
-    obstacle_map_component(st.session_state.obstacles)
+    # 显示地图
+    m = create_map(st.session_state.home_point[0], st.session_state.home_point[1], st.session_state.obstacles)
+    output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
+    
+    # 处理新绘制的多边形
+    if output and output.get('last_draw'):
+        draw_data = output['last_draw']
+        if draw_data and draw_data.get('geometry') and draw_data['geometry']['type'] == 'Polygon':
+            coords = draw_data['geometry']['coordinates'][0]
+            points = [(c[0], c[1]) for c in coords]
+            if len(points) >= 3 and st.session_state.temp_draw_data is None:
+                st.session_state.temp_draw_data = points
+                st.rerun()
+    
+    # 如果存在暂存的多边形，显示保存表单
+    if st.session_state.temp_draw_data:
+        with st.form("save_obstacle_form"):
+            st.warning("新绘制的多边形，请填写信息后保存")
+            name = st.text_input("障碍物名称")
+            height = st.number_input("高度(米)", min_value=1, value=20, step=5)
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button("保存"):
+                    if name:
+                        st.session_state.obstacles.append({
+                            'name': name,
+                            'height': height,
+                            'points': st.session_state.temp_draw_data,
+                            'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        st.session_state.temp_draw_data = None
+                        st.success(f"已添加障碍物: {name}")
+                        st.rerun()
+                    else:
+                        st.error("请输入名称")
+            with col2:
+                if st.form_submit_button("取消"):
+                    st.session_state.temp_draw_data = None
+                    st.rerun()
+
+# 自动刷新心跳
+time.sleep(0.5)
+st.rerun()
