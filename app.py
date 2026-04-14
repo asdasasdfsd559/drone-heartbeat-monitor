@@ -6,7 +6,7 @@ import math
 import threading
 from datetime import datetime, timezone, timedelta
 import json
-import leafmap.foliumap as leafmap
+from streamlit.components.v1 import html
 
 st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", layout="wide")
 
@@ -64,7 +64,163 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 初始化 session_state ====================
+# ==================== 内嵌绘图工具（完全前端，使用高德地图） ====================
+def drawing_tool():
+    """
+    返回独立的 HTML 组件，包含：
+    - 高德地图（街道图）
+    - 多边形绘制工具（Leaflet.draw）
+    - 左侧控制面板：障碍物列表（名称、高度），支持删除
+    - 按钮：保存到应用（通过 URL 参数）
+    """
+    obstacles = st.session_state.get('obstacles', [])
+    obstacles_json = json.dumps(obstacles)
+    
+    # 注意：这里的 HTML 字符串中的 {{ 和 }} 需要正确转义，因为 Python 的 f-string 使用 {}，所以双括号代表字面量 {}
+    map_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>障碍物圈选工具</title>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body, html, #map {{ height: 100%; width: 100%; }}
+            .toolbar {{
+                position: absolute; top: 10px; left: 10px; z-index: 1000;
+                background: white; padding: 10px; border-radius: 8px;
+                box-shadow: 0 0 15px rgba(0,0,0,0.2); width: 260px;
+                max-height: 80%; overflow-y: auto; font-family: sans-serif;
+            }}
+            .toolbar h3 {{ margin: 0 0 8px 0; font-size: 16px; }}
+            .toolbar button {{
+                width: 100%; margin: 5px 0; padding: 6px; cursor: pointer;
+                background: #1890ff; color: white; border: none; border-radius: 4px;
+            }}
+            .toolbar button.danger {{ background: #ff4d4f; }}
+            .obstacle-list {{ margin-top: 10px; max-height: 300px; overflow-y: auto; }}
+            .obstacle-item {{
+                display: flex; justify-content: space-between; align-items: center;
+                padding: 5px; border-bottom: 1px solid #eee;
+            }}
+            .obstacle-item button {{
+                width: auto; padding: 2px 6px; margin: 0; background: #ff4d4f;
+            }}
+            .status {{ margin-top: 10px; font-size: 12px; color: #666; }}
+        </style>
+    </head>
+    <body>
+        <div id="map"></div>
+        <div class="toolbar">
+            <h3>✏️ 障碍物管理</h3>
+            <button id="drawBtn">➕ 绘制多边形</button>
+            <button id="saveBtn" style="background:#52c41a;">💾 保存到应用</button>
+            <div class="obstacle-list" id="obstacleList">
+                <strong>已添加障碍物：</strong><br>
+            </div>
+            <div class="status" id="status">状态：就绪</div>
+        </div>
+        <script>
+            // 使用高德街道图（国内稳定，无需 key）
+            var map = L.map('map').setView([32.234097, 118.749413], 18);
+            L.tileLayer('https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {{
+                attribution: '高德地图',
+                maxZoom: 18
+            }}).addTo(map);
+            
+            var obstacles = {obstacles_json};
+            var drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+            var currentDrawControl = null;
+            
+            function render() {{
+                drawnItems.clearLayers();
+                obstacles.forEach(function(obs) {{
+                    var latlngs = obs.points.map(function(p) {{ return [p[1], p[0]]; }});
+                    var poly = L.polygon(latlngs, {{
+                        color: "red", weight: 3, fillColor: "#ff8888", fillOpacity: 0.5
+                    }}).bindPopup(obs.name + " (" + obs.height + "米)");
+                    drawnItems.addLayer(poly);
+                }});
+                var container = document.getElementById('obstacleList');
+                var html = '<strong>已添加障碍物：</strong><br>';
+                obstacles.forEach(function(obs, idx) {{
+                    html += '<div class="obstacle-item">' + (idx+1) + '. ' + obs.name + ' (' + obs.height + '米) ' +
+                            '<button onclick="removeObstacle(' + idx + ')">删除</button></div>';
+                }});
+                container.innerHTML = html;
+                document.getElementById('status').innerText = '状态：就绪，共 ' + obstacles.length + ' 个障碍物';
+            }}
+            
+            window.removeObstacle = function(idx) {{
+                obstacles.splice(idx, 1);
+                render();
+            }};
+            
+            function startDrawing() {{
+                if (currentDrawControl) map.removeControl(currentDrawControl);
+                currentDrawControl = new L.Control.Draw({{
+                    draw: {{ polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false }},
+                    edit: {{ featureGroup: drawnItems, remove: true }}
+                }});
+                map.addControl(currentDrawControl);
+                new L.Draw.Polygon(map, currentDrawControl.options.draw.polygon).enable();
+                document.getElementById('status').innerText = '状态：正在绘制多边形，点击地图添加顶点，双击完成';
+            }}
+            
+            map.on(L.Draw.Event.CREATED, function(e) {{
+                var layer = e.layer;
+                var latlngs = layer.getLatLngs()[0];
+                var points = latlngs.map(function(ll) {{ return [ll.lng, ll.lat]; }});
+                var name = prompt("请输入障碍物名称", "新障碍物");
+                if (!name) {{
+                    if (currentDrawControl) map.removeControl(currentDrawControl);
+                    return;
+                }}
+                var height = parseInt(prompt("请输入高度（米）", "20"));
+                if (isNaN(height)) height = 20;
+                obstacles.push({{
+                    name: name,
+                    height: height,
+                    points: points
+                }});
+                render();
+                if (currentDrawControl) map.removeControl(currentDrawControl);
+                document.getElementById('status').innerText = '状态：已添加障碍物 "' + name + '"';
+            }});
+            
+            document.getElementById('drawBtn').onclick = startDrawing;
+            document.getElementById('saveBtn').onclick = function() {{
+                var data = JSON.stringify(obstacles);
+                var newUrl = window.location.href.split('?')[0] + '?obstacles=' + encodeURIComponent(data);
+                window.location.href = newUrl;
+            }};
+            
+            render();
+        </script>
+    </body>
+    </html>
+    """
+    return html(map_html, height=700)
+
+# ==================== 从 URL 参数读取障碍物 ====================
+def load_obstacles_from_url():
+    params = st.query_params
+    if 'obstacles' in params:
+        try:
+            data = json.loads(params['obstacles'])
+            if isinstance(data, list):
+                st.session_state.obstacles = data
+                st.query_params.clear()
+                st.rerun()
+        except:
+            pass
+
+# ==================== 初始化 ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr = HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -72,9 +228,7 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
-# 学校中心点（南京科技职业学院）
 SCHOOL_CENTER = (118.749413, 32.234097)
-
 if 'home_point' not in st.session_state:
     st.session_state.home_point = SCHOOL_CENTER
 
@@ -87,12 +241,13 @@ if 'a_point' not in st.session_state:
 if 'b_point' not in st.session_state:
     st.session_state.b_point = (SCHOOL_CENTER[0] + 0.001, SCHOOL_CENTER[1] + 0.001)
 
-if 'obstacles' not in st.session_state:
-    st.session_state.obstacles = []   # 每个元素: {name, height, geojson}
+if 'coord_system' not in st.session_state:
+    st.session_state.coord_system = 'wgs84'
 
-# 临时存储新绘制的多边形（GeoJSON）
-if 'pending_geojson' not in st.session_state:
-    st.session_state.pending_geojson = None
+if 'obstacles' not in st.session_state:
+    st.session_state.obstacles = []
+
+load_obstacles_from_url()
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -121,14 +276,10 @@ with st.sidebar:
     if "🗺️ 航线规划" in st.session_state.page:
         st.markdown("---")
         st.subheader("🏠 航线设置")
-        col1, col2 = st.columns(2)
-        with col1:
-            a_lng = st.number_input("起点经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
-            a_lat = st.number_input("起点纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
-        with col2:
-            b_lng = st.number_input("终点经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
-            b_lat = st.number_input("终点纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
-        
+        a_lng = st.number_input("起点经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
+        a_lat = st.number_input("起点纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
+        b_lng = st.number_input("终点经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
+        b_lat = st.number_input("终点纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
         if st.button("✈️ 生成/更新航线", key="gen_route"):
             st.session_state.a_point = (a_lng, a_lat)
             st.session_state.b_point = (b_lng, b_lat)
@@ -138,19 +289,15 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("🚧 障碍物管理")
         st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
-        
-        # 显示障碍物列表
         if st.session_state.obstacles:
             for i, obs in enumerate(st.session_state.obstacles):
                 st.write(f"{i+1}. {obs['name']} (高度: {obs['height']}米)")
-        
-        # 清空所有障碍物
         if st.button("🗑️ 清空所有障碍物", key="clear_all"):
             st.session_state.obstacles = []
             st.rerun()
         
         st.markdown("---")
-        st.info("💡 使用地图右上角的绘图工具绘制多边形，绘制后点击下方「保存当前多边形」按钮。")
+        st.info("💡 下方地图工具：点击「绘制多边形」→ 在地图上点击顶点 → 双击完成 → 输入名称和高度 → 点击「保存到应用」")
 
 # ==================== 主内容 ====================
 if "飞行监控" in st.session_state.page:
@@ -198,70 +345,17 @@ if "飞行监控" in st.session_state.page:
 
 else:
     st.header("🗺️ 航线规划 - 多边形圈选障碍物")
-    
-    # 显示航线信息
     if st.session_state.waypoints:
         a, b = st.session_state.waypoints
         dx = (b[0] - a[0]) * 111000 * math.cos(math.radians((a[1] + b[1]) / 2))
         dy = (b[1] - a[1]) * 111000
         distance = math.sqrt(dx*dx + dy*dy)
-        st.info(f"✈️ 当前航线：起点 → 终点，直线距离约 {distance:.1f} 米")
+        st.info(f"✈️ 当前航线距离: {distance:.1f} 米")
     else:
-        st.warning("⚠️ 请先在左侧设置起点和终点并点击「生成/更新航线」")
+        st.warning("⚠️ 请先在左侧设置起点和终点")
     
-    # ========== 创建 leafmap 地图 ==========
-    # 使用 CartoDB 底图（国内访问稳定，无需注册）
-    m = leafmap.Map(center=[SCHOOL_CENTER[1], SCHOOL_CENTER[0]], zoom=18, draw_control=True, draw_export=True)
-    
-    # 添加已保存的障碍物到地图
-    for obs in st.session_state.obstacles:
-        # obs['geojson'] 是完整的 GeoJSON Feature
-        m.add_geojson(obs['geojson'], style={'color': 'red', 'fillOpacity': 0.5}, layer_name=obs['name'])
-    
-    # 显示地图
-    m.to_streamlit(height=600)
-    
-    # ========== 保存新绘制的多边形 ==========
-    # leafmap 的 draw_export() 返回用户绘制的所有图形的 GeoJSON FeatureCollection
-    # 我们通过一个按钮来触发获取和保存
-    if st.button("💾 保存当前绘制的多边形"):
-        # 获取用户绘制的最新图形
-        geojson = m.draw_export()
-        if geojson and 'features' in geojson and len(geojson['features']) > 0:
-            # 取最后一个绘制的图形（最新）
-            feature = geojson['features'][-1]
-            # 弹出输入框
-            with st.form(key="obstacle_form"):
-                name = st.text_input("障碍物名称")
-                height = st.number_input("高度(米)", min_value=1, value=20, step=5)
-                submitted = st.form_submit_button("确认保存")
-                if submitted:
-                    if name:
-                        st.session_state.obstacles.append({
-                            'name': name,
-                            'height': height,
-                            'geojson': feature
-                        })
-                        st.success(f"已添加障碍物: {name}")
-                        st.rerun()
-                    else:
-                        st.error("请输入名称")
-        else:
-            st.warning("请先在地图上绘制一个多边形（使用右上角绘图工具）")
-    
-    # 删除障碍物（提供按钮）
-    if st.session_state.obstacles:
-        st.markdown("---")
-        st.subheader("🗑️ 删除障碍物")
-        for i, obs in enumerate(st.session_state.obstacles):
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.write(f"{i+1}. {obs['name']} (高度: {obs['height']}米)")
-            with col2:
-                if st.button("删除", key=f"del_{i}"):
-                    st.session_state.obstacles.pop(i)
-                    st.rerun()
+    # 显示绘图工具
+    drawing_tool()
 
-# 自动刷新心跳
 time.sleep(0.5)
 st.rerun()
