@@ -7,6 +7,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 import folium
 from streamlit_folium import st_folium
+from folium import plugins
 
 st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", layout="wide")
 
@@ -159,6 +160,24 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             tooltip=f"{obs['name']}"
         ).add_to(m)
     
+    # 绘制工具
+    draw = plugins.Draw(
+        draw_options={
+            'polygon': {
+                'allowIntersection': False,
+                'shapeOptions': {'color': '#ff0000', 'fillColor': '#ff0000', 'fillOpacity': 0.3},
+                'repeatMode': True
+            },
+            'polyline': False,
+            'rectangle': False,
+            'circle': False,
+            'marker': False,
+            'circlemarker': False
+        },
+        edit_options={'edit': True, 'remove': True}
+    )
+    draw.add_to(m)
+    
     folium.LayerControl().add_to(m)
     
     return m
@@ -192,9 +211,41 @@ if 'coord_system' not in st.session_state:
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
+# 临时存储新绘制的多边形
+if 'pending_points' not in st.session_state:
+    st.session_state.pending_points = None
+
 # 下一个ID
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
+
+# 保存请求标志
+if 'save_request' not in st.session_state:
+    st.session_state.save_request = False
+
+# 临时存储名称和高度
+if 'temp_name' not in st.session_state:
+    st.session_state.temp_name = ""
+if 'temp_height' not in st.session_state:
+    st.session_state.temp_height = 20
+
+# ==================== 处理保存请求 ====================
+
+if st.session_state.save_request and st.session_state.pending_points:
+    if st.session_state.temp_name:
+        st.session_state.obstacles.append({
+            'id': st.session_state.next_id,
+            'name': st.session_state.temp_name,
+            'height': st.session_state.temp_height,
+            'points': st.session_state.pending_points,
+            'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        st.session_state.next_id += 1
+        st.session_state.pending_points = None
+        st.session_state.save_request = False
+        st.session_state.temp_name = ""
+        st.session_state.temp_height = 20
+        st.rerun()
 
 # ==================== 侧边栏 ====================
 
@@ -272,63 +323,31 @@ with st.sidebar:
         
         st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # ========== 添加障碍物（手动输入顶点） ==========
+        # 显示临时多边形状态
+        if st.session_state.pending_points:
+            st.success(f"✅ 已绘制多边形，共 {len(st.session_state.pending_points)} 个顶点")
+        else:
+            st.info("📐 请先在地图上绘制多边形（点击多边形工具，至少3个点）")
+        
+        # 添加障碍物
         st.markdown("### ➕ 添加新障碍物")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            obs_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="obs_name")
-        with col2:
-            obs_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="obs_height")
-        
-        st.markdown("**顶点坐标（至少3个点，每个点一行，格式：经度,纬度）**")
-        st.caption("示例: 118.749000,32.233800")
-        
-        # 默认顶点（三角形）
-        default_points = """118.749000,32.233800
-118.749500,32.233800
-118.749250,32.234200"""
-        
-        points_text = st.text_area("顶点坐标", value=default_points, height=150, key="points_text")
+        st.session_state.temp_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", value=st.session_state.temp_name, key="temp_name_input")
+        st.session_state.temp_height = st.number_input("高度(米)", min_value=1, max_value=200, value=st.session_state.temp_height, step=5, key="temp_height_input")
         
         if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
-            if obs_name:
-                # 解析顶点坐标
-                lines = points_text.strip().split('\n')
-                points = []
-                valid = True
-                for line in lines:
-                    line = line.strip()
-                    if line:
-                        try:
-                            parts = line.split(',')
-                            lng = float(parts[0].strip())
-                            lat = float(parts[1].strip())
-                            points.append((lng, lat))
-                        except:
-                            st.error(f"坐标格式错误: {line}")
-                            valid = False
-                            break
-                
-                if valid and len(points) >= 3:
-                    st.session_state.obstacles.append({
-                        'id': st.session_state.next_id,
-                        'name': obs_name,
-                        'height': obs_height,
-                        'points': points,
-                        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    st.session_state.next_id += 1
-                    st.success(f"✅ 已添加障碍物: {obs_name}")
+            if st.session_state.pending_points and len(st.session_state.pending_points) >= 3:
+                if st.session_state.temp_name:
+                    st.session_state.save_request = True
                     st.rerun()
                 else:
-                    st.error("至少需要3个顶点")
+                    st.error("请输入障碍物名称")
             else:
-                st.error("请输入障碍物名称")
+                st.error("请先在地图上绘制多边形（至少3个顶点）")
         
         st.markdown("---")
         
-        # ========== 删除障碍物 ==========
+        # 删除障碍物
         if st.session_state.obstacles:
             st.markdown("### 🗑️ 删除障碍物")
             
@@ -342,6 +361,7 @@ with st.sidebar:
             
             if st.button("🗑️ 清空所有", key="clear_all", use_container_width=True):
                 st.session_state.obstacles = []
+                st.session_state.pending_points = None
                 st.rerun()
 
 # ==================== 主内容 ====================
@@ -439,14 +459,47 @@ else:
                 st.session_state.coord_system
             )
             
-            st_folium(m, width=1000, height=600)
+            output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
+            
+            # 检测绘制完成的多边形
+            if output and output.get('last_draw') is not None:
+                draw_data = output['last_draw']
+                if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
+                    coordinates = draw_data['geometry']['coordinates'][0]
+                    points = [(coord[0], coord[1]) for coord in coordinates]
+                    if len(points) >= 3:
+                        st.session_state.pending_points = points
+                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在左侧输入名称和高度后保存")
+                        st.rerun()
+            
             st.success("✅ 地图加载成功")
             
             with st.expander("📖 使用说明", expanded=False):
                 st.markdown("""
                 **添加障碍物步骤：**
-                1. 在左侧边栏输入障碍物名称和高度
-                2. 输入顶点坐标（至少3个点）
-                3. 点击「保存障碍物」
+                1. 点击地图右上角的 📐 多边形绘制按钮
+                2. 在地图上依次点击各个顶点（至少3个点，可以画三角形、四边形等）
+                3. 双击鼠标完成绘制
+                4. 在左侧边栏输入障碍物名称和高度
+                5. 点击「保存障碍物」
                 
-                **顶点坐标格式：**
+                **删除障碍物：**
+                - 在左侧边栏选择要删除的障碍物，点击「删除」
+                """)
+            
+        except Exception as e:
+            st.error(f"地图加载失败: {e}")
+            st.info("请刷新页面重试")
+    
+    # 显示障碍物列表
+    if st.session_state.obstacles:
+        st.markdown("---")
+        st.subheader("🚧 当前障碍物列表")
+        
+        for i, obs in enumerate(st.session_state.obstacles):
+            with st.expander(f"障碍物 {i+1}: {obs['name']} (高度: {obs['height']}米)"):
+                st.write(f"**创建时间:** {obs['created_at']}")
+                st.write(f"**顶点数量:** {len(obs['points'])} 个")
+
+time.sleep(0.5)
+st.rerun()
