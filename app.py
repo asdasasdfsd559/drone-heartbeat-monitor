@@ -199,7 +199,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             fill=True,
             fill_color=fill_color,
             fill_opacity=0.5,
-            popup=f"🚧 {obs['name']}<br>高度: {height}米<br>ID: {obs['id']}",
+            popup=f"🚧 {obs['name']}<br>高度: {height}米",
             tooltip=f"{obs['name']} ({height}米)"
         ).add_to(m)
     
@@ -262,12 +262,38 @@ if 'coord_system' not in st.session_state:
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
-if 'temp_draw_data' not in st.session_state:
-    st.session_state.temp_draw_data = None
+if 'pending_points' not in st.session_state:
+    st.session_state.pending_points = None
 
 # 编辑状态
-if 'editing_obstacle' not in st.session_state:
-    st.session_state.editing_obstacle = None
+if 'editing_obstacle_id' not in st.session_state:
+    st.session_state.editing_obstacle_id = None
+
+# 保存请求标志
+if 'save_request' not in st.session_state:
+    st.session_state.save_request = False
+
+# ==================== 处理保存请求 ====================
+
+# 在页面刷新时处理保存请求
+if st.session_state.save_request and st.session_state.pending_points:
+    # 获取待保存的数据
+    points = st.session_state.pending_points
+    obs_name = st.session_state.get('new_obs_name_temp', '')
+    obs_height = st.session_state.get('new_obs_height_temp', 20)
+    
+    new_id = max([o['id'] for o in st.session_state.obstacles]) + 1 if st.session_state.obstacles else 1
+    new_obs = {
+        'id': new_id,
+        'name': obs_name if obs_name else f"障碍物{new_id}",
+        'height': obs_height,
+        'points': points,
+        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    st.session_state.obstacles.append(new_obs)
+    st.session_state.pending_points = None
+    st.session_state.save_request = False
+    st.rerun()
 
 # ==================== 侧边栏 ====================
 
@@ -347,25 +373,21 @@ with st.sidebar:
         
         # 添加障碍物
         st.markdown("**添加新障碍物:**")
-        obs_name = st.text_input("障碍物名称", placeholder="例如: 教学楼、食堂、图书馆", key="new_obs_name")
-        obs_height = st.number_input("障碍物高度 (米)", min_value=1, max_value=200, value=20, step=5, key="new_obs_height")
+        
+        # 使用临时存储的值
+        temp_name = st.text_input("障碍物名称", placeholder="例如: 教学楼、食堂、图书馆", key="new_obs_name_temp")
+        temp_height = st.number_input("障碍物高度 (米)", min_value=1, max_value=200, value=20, step=5, key="new_obs_height_temp")
+        
+        # 显示当前是否有待保存的多边形
+        if st.session_state.pending_points:
+            st.success(f"✅ 已绘制多边形，共 {len(st.session_state.pending_points)} 个顶点")
         
         st.caption("💡 请先在地图上使用多边形工具绘制区域，然后点击下方按钮保存")
         
-        if st.button("💾 保存当前绘制的多边形", key="save_obs_btn"):
-            if st.session_state.temp_draw_data and len(st.session_state.temp_draw_data) >= 3:
-                points = st.session_state.temp_draw_data
-                new_id = max([o['id'] for o in st.session_state.obstacles]) + 1 if st.session_state.obstacles else 1
-                new_obs = {
-                    'id': new_id,
-                    'name': obs_name if obs_name else f"障碍物{new_id}",
-                    'height': obs_height,
-                    'points': points,
-                    'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                st.session_state.obstacles.append(new_obs)
-                st.session_state.temp_draw_data = None
-                st.success(f"已添加障碍物: {new_obs['name']} (高度:{obs_height}米)")
+        if st.button("💾 保存障碍物", key="save_obs_btn"):
+            if st.session_state.pending_points and len(st.session_state.pending_points) >= 3:
+                # 设置保存请求标志
+                st.session_state.save_request = True
                 st.rerun()
             else:
                 st.warning("请先在地图上绘制多边形（至少3个顶点）")
@@ -391,32 +413,29 @@ with st.sidebar:
                         new_height = st.number_input("新高度(米)", min_value=1, max_value=200, 
                                                       value=target_obs.get('height', 20), step=5, key="edit_obs_height")
                     
-                    st.caption("💡 修改多边形：重新在地图上绘制后点击更新")
-                    
-                    col_update, col_cancel = st.columns(2)
+                    col_update, col_save = st.columns(2)
                     with col_update:
                         if st.button("🔄 更新多边形", key="update_polygon_btn"):
-                            st.session_state.editing_obstacle = target_obs
-                            st.info(f"请在地图上重新绘制 {target_obs['name']} 的多边形区域")
+                            st.session_state.editing_obstacle_id = obs_id
+                            st.info(f"请在地图上重新绘制 {target_obs['name']} 的多边形区域，绘制后点击「确认更新」")
                     
-                    # 如果正在编辑，保存新绘制的多边形
-                    if st.session_state.editing_obstacle and st.session_state.temp_draw_data:
-                        if st.session_state.editing_obstacle['id'] == obs_id:
-                            if st.button("✅ 确认更新多边形", key="confirm_update"):
-                                target_obs['points'] = st.session_state.temp_draw_data
-                                target_obs['name'] = new_name
-                                target_obs['height'] = new_height
-                                st.session_state.temp_draw_data = None
-                                st.session_state.editing_obstacle = None
-                                st.success(f"已更新障碍物: {target_obs['name']}")
-                                st.rerun()
+                    with col_save:
+                        if st.button("💾 保存名称和高度", key="save_name_height"):
+                            target_obs['name'] = new_name
+                            target_obs['height'] = new_height
+                            st.success(f"已更新障碍物信息")
+                            st.rerun()
                     
-                    # 非多边形修改（只改名称和高度）
-                    if st.button("💾 保存名称和高度", key="save_name_height"):
-                        target_obs['name'] = new_name
-                        target_obs['height'] = new_height
-                        st.success(f"已更新障碍物信息")
-                        st.rerun()
+                    # 如果正在编辑且有新的多边形数据
+                    if st.session_state.editing_obstacle_id == obs_id and st.session_state.pending_points:
+                        if st.button("✅ 确认更新多边形", key="confirm_update"):
+                            target_obs['points'] = st.session_state.pending_points
+                            target_obs['name'] = new_name
+                            target_obs['height'] = new_height
+                            st.session_state.pending_points = None
+                            st.session_state.editing_obstacle_id = None
+                            st.success(f"已更新障碍物: {target_obs['name']}")
+                            st.rerun()
         
         st.markdown("---")
         st.subheader("🗑️ 删除障碍物")
@@ -436,8 +455,8 @@ with st.sidebar:
         
         if st.button("🗑️ 清空所有障碍物", key="clear_all_obs"):
             st.session_state.obstacles = []
-            st.session_state.temp_draw_data = None
-            st.session_state.editing_obstacle = None
+            st.session_state.pending_points = None
+            st.session_state.editing_obstacle_id = None
             st.success("已清空所有障碍物")
             st.rerun()
 
@@ -538,18 +557,15 @@ else:
             
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
+            # 检测绘制完成的多边形 - 直接保存到 pending_points
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coordinates = draw_data['geometry']['coordinates'][0]
                     points = [(coord[0], coord[1]) for coord in coordinates]
                     if len(points) >= 3:
-                        st.session_state.temp_draw_data = points
+                        st.session_state.pending_points = points
                         st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点")
-                        if st.session_state.editing_obstacle:
-                            st.info(f"正在编辑: {st.session_state.editing_obstacle['name']}，请在侧边栏点击「确认更新」")
-                        else:
-                            st.info("请在侧边栏设置名称和高度后点击「保存当前绘制的多边形」")
                         st.rerun()
             
             st.success("✅ 地图加载成功")
@@ -561,17 +577,17 @@ else:
                 2. 在地图上依次点击各个顶点（至少3个点）
                 3. 双击鼠标完成绘制
                 4. 在左侧边栏输入障碍物名称和高度
-                5. 点击「保存当前绘制的多边形」
+                5. 点击「保存障碍物」
                 
                 **修改障碍物步骤：**
-                1. 在左侧边栏「修改障碍物」中选择要修改的障碍物
+                1. 在左侧边栏选择要修改的障碍物
                 2. 修改名称和高度后点击「保存名称和高度」
-                3. 如需修改多边形，点击「更新多边形」，然后重新绘制区域，最后点击「确认更新」
+                3. 如需修改多边形，点击「更新多边形」，然后重新绘制，最后点击「确认更新」
                 
                 **障碍物颜色：**
-                - 🟢 浅红色：高度 < 20米
-                - 🟡 中红色：高度 20-50米
-                - 🔴 深红色：高度 > 50米
+                - 浅红色：高度 < 20米
+                - 中红色：高度 20-50米
+                - 深红色：高度 > 50米
                 """)
             
         except Exception as e:
