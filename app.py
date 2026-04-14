@@ -104,7 +104,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
     else:
         display_lng, display_lat = center_lng, center_lat
     
-    # 使用 OpenStreetMap 作为底图（稳定，无需attribution问题）
+    # 使用 OpenStreetMap 作为底图（稳定）
     m = folium.Map(
         location=[display_lat, display_lng],
         zoom_start=18,
@@ -112,7 +112,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         tiles='OpenStreetMap'
     )
     
-    # 添加高德卫星图作为可选图层（带正确的attribution）
+    # 添加高德卫星图作为可选图层
     folium.TileLayer(
         tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
         attr='高德地图',
@@ -176,7 +176,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
-    # 障碍物
+    # 已保存的障碍物
     for obs in obstacles:
         polygon_points = []
         for point in obs['points']:
@@ -205,7 +205,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             tooltip=f"{obs['name']} ({height}米)"
         ).add_to(m)
     
-    # 绘制工具
+    # 多边形绘制工具
     draw = plugins.Draw(
         draw_options={
             'polygon': {
@@ -267,8 +267,13 @@ if 'coord_system' not in st.session_state:
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
+# 临时存储新绘制的多边形
 if 'temp_draw_data' not in st.session_state:
     st.session_state.temp_draw_data = None
+
+# 控制是否显示保存表单
+if 'show_save_form' not in st.session_state:
+    st.session_state.show_save_form = False
 
 # ==================== 侧边栏 ====================
 
@@ -346,37 +351,15 @@ with st.sidebar:
         
         st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # 添加障碍物
-        st.markdown("**添加新障碍物:**")
-        obs_name = st.text_input("障碍物名称", placeholder="例如: 教学楼、食堂、图书馆", key="new_obs_name")
-        obs_height = st.number_input("障碍物高度 (米)", min_value=1, max_value=200, value=20, step=5, key="new_obs_height")
-        
-        st.caption("💡 请先在地图上使用多边形工具绘制区域，然后点击下方按钮保存")
-        
-        if st.button("💾 保存当前绘制的多边形", key="save_obs_btn"):
-            if st.session_state.temp_draw_data and len(st.session_state.temp_draw_data) >= 3:
-                points = st.session_state.temp_draw_data
-                new_obs = {
-                    'id': len(st.session_state.obstacles) + 1,
-                    'name': obs_name if obs_name else f"障碍物{len(st.session_state.obstacles)+1}",
-                    'height': obs_height,
-                    'points': points,
-                    'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                st.session_state.obstacles.append(new_obs)
-                st.session_state.temp_draw_data = None
-                st.success(f"已添加障碍物: {new_obs['name']} (高度:{obs_height}米)")
-                st.rerun()
-            else:
-                st.warning("请先在地图上绘制多边形（至少3个顶点）")
-        
-        st.markdown("---")
-        st.subheader("🗑️ 删除障碍物")
-        
+        # 显示已保存的障碍物列表
         if st.session_state.obstacles:
-            obs_options = [f"{o['id']}. {o['name']} (高度:{o.get('height',10)}米)" for o in st.session_state.obstacles]
+            for i, obs in enumerate(st.session_state.obstacles):
+                st.write(f"{i+1}. {obs['name']} (高度: {obs['height']}米)")
+        
+        # 删除障碍物
+        if st.session_state.obstacles:
+            obs_options = [f"{i+1}. {obs['name']}" for i, obs in enumerate(st.session_state.obstacles)]
             obs_to_delete = st.selectbox("选择要删除的障碍物", options=obs_options, key="obs_to_delete")
-            
             if st.button("删除选中障碍物", key="delete_obs"):
                 idx = int(obs_to_delete.split('.')[0]) - 1
                 deleted = st.session_state.obstacles.pop(idx)
@@ -386,8 +369,12 @@ with st.sidebar:
         if st.button("🗑️ 清空所有障碍物", key="clear_all_obs"):
             st.session_state.obstacles = []
             st.session_state.temp_draw_data = None
+            st.session_state.show_save_form = False
             st.success("已清空所有障碍物")
             st.rerun()
+        
+        st.markdown("---")
+        st.info("💡 使用地图右上角的多边形工具绘制区域，绘制后下方会弹出保存表单。")
 
 # ==================== 主内容 ====================
 
@@ -425,7 +412,7 @@ if "飞行监控" in st.session_state.page:
         if status == "超时":
             st.error(f"⚠️ 连接超时！已 {time_since:.1f} 秒未收到心跳")
         
-        # 图表
+        # 心跳间隔分析图
         if len(heartbeats) >= 2:
             fig_interval = go.Figure()
             intervals_data = [heartbeats[i]['timestamp'] - heartbeats[i-1]['timestamp'] for i in range(1, len(heartbeats))]
@@ -436,6 +423,7 @@ if "飞行监控" in st.session_state.page:
             fig_interval.update_layout(title="心跳间隔精确度分析", xaxis_title="序列号", yaxis_title="间隔 (秒)", height=300)
             st.plotly_chart(fig_interval, use_container_width=True)
         
+        # 心跳趋势图
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df['time'], y=df['seq'], mode='lines+markers', name='心跳', line=dict(color='blue', width=2)))
         fig.update_layout(title="心跳序列号趋势", xaxis_title="北京时间", yaxis_title="序列号", height=300)
@@ -486,20 +474,55 @@ else:
                 st.session_state.coord_system
             )
             
+            # 显示地图并获取绘图数据
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 检测绘制完成的多边形
-            if output and output.get('last_draw') is not None:
+            # 检测新绘制的多边形（仅当没有待保存的数据时）
+            if output and output.get('last_draw') is not None and st.session_state.temp_draw_data is None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coordinates = draw_data['geometry']['coordinates'][0]
                     points = [(coord[0], coord[1]) for coord in coordinates]
                     if len(points) >= 3:
                         st.session_state.temp_draw_data = points
-                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在侧边栏设置名称和高度后保存")
+                        st.session_state.show_save_form = True
                         st.rerun()
             
             st.success("✅ 地图加载成功")
+            
+            # 显示保存表单（如果存在待保存的多边形）
+            if st.session_state.show_save_form and st.session_state.temp_draw_data:
+                st.markdown("---")
+                st.subheader("📝 保存新障碍物")
+                col_name, col_height = st.columns(2)
+                with col_name:
+                    new_name = st.text_input("障碍物名称", key="new_obs_name")
+                with col_height:
+                    new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="new_obs_height")
+                
+                col_confirm, col_cancel = st.columns(2)
+                with col_confirm:
+                    if st.button("✅ 确认保存", key="confirm_save"):
+                        if new_name:
+                            new_id = len(st.session_state.obstacles) + 1
+                            st.session_state.obstacles.append({
+                                'id': new_id,
+                                'name': new_name,
+                                'height': new_height,
+                                'points': st.session_state.temp_draw_data,
+                                'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                            st.session_state.temp_draw_data = None
+                            st.session_state.show_save_form = False
+                            st.success(f"已添加障碍物: {new_name}")
+                            st.rerun()
+                        else:
+                            st.error("请输入障碍物名称")
+                with col_cancel:
+                    if st.button("❌ 取消", key="cancel_save"):
+                        st.session_state.temp_draw_data = None
+                        st.session_state.show_save_form = False
+                        st.rerun()
             
             with st.expander("📖 使用说明", expanded=False):
                 st.markdown("""
@@ -507,23 +530,19 @@ else:
                 1. 点击地图右上角的 📐 多边形绘制按钮
                 2. 在地图上依次点击各个顶点（至少3个点）
                 3. 双击鼠标完成绘制
-                4. 在左侧边栏输入障碍物名称和高度
-                5. 点击「保存当前绘制的多边形」
+                4. 页面下方会弹出保存表单
+                5. 输入障碍物名称和高度，点击「确认保存」
                 
                 **障碍物颜色：**
                 - 🟢 浅红色：高度 < 20米
                 - 🟡 中红色：高度 20-50米
                 - 🔴 深红色：高度 > 50米
-                
-                **地图图层：**
-                - 默认显示街道地图
-                - 右上角可切换高德卫星图/街道图
                 """)
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
             st.info("请刷新页面重试")
 
-# 每0.5秒刷新
+# 每0.5秒刷新（心跳用）
 time.sleep(0.5)
 st.rerun()
