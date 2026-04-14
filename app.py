@@ -5,9 +5,8 @@ import time
 import math
 import threading
 from datetime import datetime, timezone, timedelta
-import folium
+import leafmap.foliumap as leafmap
 from streamlit_folium import st_folium
-from folium import plugins
 
 st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", layout="wide")
 
@@ -69,95 +68,41 @@ class HeartbeatManager:
 def wgs84_to_gcj02(lng, lat):
     return lng + 0.0005, lat + 0.0003
 
-# ==================== 地图函数 ====================
-def create_map(center_lng, center_lat, waypoints, home_point, obstacles, pending_polygon, coord_system):
+# ==================== 地图函数（使用 leafmap 绘图工具） ====================
+def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
+    """使用 leafmap 创建可绘制多边形的地图"""
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
     else:
         display_lng, display_lat = center_lng, center_lat
     
-    m = folium.Map(
-        location=[display_lat, display_lng],
-        zoom_start=18,
-        control_scale=True,
-        tiles='OpenStreetMap'
-    )
+    m = leafmap.Map(center=[display_lat, display_lng], zoom=18, control_scale=True)
+    # 添加底图（卫星图）
+    m.add_basemap("SATELLITE")
     
-    # 高德卫星图
-    folium.TileLayer(
-        'https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-        attr='高德地图',
-        name='高德卫星图',
-        control=True
-    ).add_to(m)
-    
-    # Home点
+    # 添加 Home 点
     if home_point:
-        folium.Marker([display_lat, display_lng], popup='🏠 学校中心点', icon=folium.Icon(color='green')).add_to(m)
-        folium.Circle(radius=100, location=[display_lat, display_lng], color='green', fill=True, fill_opacity=0.15).add_to(m)
+        m.add_marker([display_lat, display_lng], popup="🏠 学校中心点", icon=m.icon_dict['green'])
+        m.add_circle([display_lat, display_lng], radius=100, color='green', fill=True, fill_opacity=0.15)
     
-    # 航点
+    # 添加航点
     if waypoints:
-        points = []
-        for i, wp in enumerate(waypoints):
-            points.append([wp[1], wp[0]])
-            color = 'blue' if i < len(waypoints)-1 else 'red'
-            folium.Marker([wp[1], wp[0]], popup=f'航点 {i+1}', icon=folium.Icon(color=color)).add_to(m)
-        folium.PolyLine(points, color='blue', weight=3).add_to(m)
+        points = [[wp[1], wp[0]] for wp in waypoints]
+        for i, pt in enumerate(points):
+            m.add_marker(pt, popup=f"航点 {i+1}", icon=m.icon_dict['blue'])
+        m.add_line(points, color="blue", weight=3)
     
-    # 已保存的障碍物
+    # 添加已保存的障碍物
     for obs in obstacles:
-        polygon_points = [[p[1], p[0]] for p in obs['points']]
+        points = [[p[1], p[0]] for p in obs['points']]
         height = obs.get('height', 10)
-        if height < 20:
-            fill_color = '#ff9999'
-        elif height < 50:
-            fill_color = '#ff6666'
-        else:
-            fill_color = '#ff3333'
-        folium.Polygon(
-            locations=polygon_points,
-            color='red',
-            weight=3,
-            fill=True,
-            fill_color=fill_color,
-            fill_opacity=0.5,
-            popup=f"🚧 {obs['name']}<br>高度: {height}米",
-            tooltip=f"{obs['name']}"
-        ).add_to(m)
+        color = '#ff9999' if height < 20 else ('#ff6666' if height < 50 else '#ff3333')
+        m.add_polygon(points, color='red', fill_color=color, fill_opacity=0.5, popup=f"{obs['name']} ({height}米)")
     
-    # 临时多边形（橙色预览）
-    if pending_polygon and len(pending_polygon) >= 3:
-        preview_points = [[p[1], p[0]] for p in pending_polygon]
-        folium.Polygon(
-            locations=preview_points,
-            color='orange',
-            weight=3,
-            fill=True,
-            fill_color='orange',
-            fill_opacity=0.3,
-            popup="待保存的障碍物",
-            tooltip="待保存"
-        ).add_to(m)
-    
-    # 绘图工具
-    draw = plugins.Draw(
-        draw_options={
-            'polygon': {
-                'allowIntersection': False,
-                'shapeOptions': {'color': '#ff0000', 'fillColor': '#ff0000', 'fillOpacity': 0.3},
-                'repeatMode': True
-            },
-            'polyline': False,
-            'rectangle': False,
-            'circle': False,
-            'marker': False,
-            'circlemarker': False
-        },
-        edit_options={'edit': True, 'remove': True}
-    )
-    draw.add_to(m)
-    folium.LayerControl().add_to(m)
+    # 启用绘图工具
+    m.draw_control(position='topright', draw_all_shapes=False, draw_polygon=True,
+                   draw_circle=False, draw_rectangle=False, draw_polyline=False,
+                   edit=True, remove=True)
     return m
 
 # ==================== 初始化 ====================
@@ -168,7 +113,7 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
-# 学校坐标 (南京科技职业学院)
+# 学校坐标
 if 'home_point' not in st.session_state:
     st.session_state.home_point = (118.749413, 32.234097)
 
@@ -188,13 +133,13 @@ if 'coord_system' not in st.session_state:
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
+# 临时存储新绘制的多边形（由 leafmap 绘图工具返回）
 if 'pending_polygon' not in st.session_state:
     st.session_state.pending_polygon = None
 
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
 
-# 临时保存用户输入
 if 'temp_name' not in st.session_state:
     st.session_state.temp_name = ""
 if 'temp_height' not in st.session_state:
@@ -272,9 +217,8 @@ with st.sidebar:
         if st.session_state.pending_polygon:
             st.success(f"✏️ 已绘制多边形，共 {len(st.session_state.pending_polygon)} 个顶点")
         else:
-            st.info("📐 使用地图右上角的多边形工具绘制区域")
+            st.info("📐 使用地图右上角的绘图工具（多边形图标）绘制区域")
         
-        # 输入框绑定 session_state
         new_name = st.text_input("障碍物名称", value=st.session_state.temp_name, key="new_name_input")
         new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=st.session_state.temp_height, step=5, key="new_height_input")
         st.session_state.temp_name = new_name
@@ -367,7 +311,7 @@ if "飞行监控" in st.session_state.page:
 
 else:
     st.header("🗺️ 航线规划 - 南京科技职业学院")
-    st.caption("🎨 使用地图右上角的多边形工具绘制障碍物区域，绘制后自动捕获，填写名称高度后保存")
+    st.caption("🎨 使用地图右上角的绘图工具（多边形图标）绘制障碍物区域，绘制完成后点击「完成」按钮，然后在左侧输入名称高度保存")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -396,10 +340,15 @@ else:
                 st.session_state.waypoints,
                 st.session_state.home_point,
                 st.session_state.obstacles,
-                st.session_state.pending_polygon,
                 st.session_state.coord_system
             )
             
+            # 使用 leafmap 的绘图工具返回数据
+            # leafmap 的绘图工具会在绘制完成后将 GeoJSON 存储在 m.user_rois 中
+            # 我们需要通过 st_folium 获取地图状态，但 leafmap 的绘图数据不能直接通过 st_folium 获取
+            # 替代方案：使用 leafmap 的绘图回调，但为了简单，我们可以让用户绘制后点击“完成”按钮，然后通过 st_folium 获取 last_draw
+            # 实际上 leafmap 底层也是 folium，所以我们可以直接用 st_folium 获取 last_draw
+            # 这里我们直接使用 st_folium 获取绘制数据
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
             # 处理新绘制的多边形
