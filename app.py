@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import folium
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="南京科技职业学院 - 无人机地面站", layout="wide")
+st.set_page_config(page_title="南京科技职业学院无人机地面站", layout="wide")
 
 # ==================== 北京时间工具函数 ====================
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -249,15 +249,49 @@ with st.sidebar:
         for i, ob in enumerate(st.session_state.obstacles):
             st.write(f"{i+1}. {ob['name']} | {ob['height']}m")
 
-# ==================== 飞行监控 ====================
+# ==================== 飞行监控（图表已恢复） ====================
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控")
     hb_list, seq, _ = st.session_state.heartbeat_mgr.get_data()
+    
     if hb_list:
         df = pd.DataFrame(hb_list)
+
+        # 指标卡片
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("总心跳数", len(df))
+        with col2:
+            st.metric("当前序列号", seq)
+        with col3:
+            status, _ = st.session_state.heartbeat_mgr.get_connection_status()
+            st.metric("连接状态", "✅ 在线" if status == "在线" else "❌ 离线")
+        with col4:
+            loss = (seq - len(df)) / seq * 100 if seq > 0 else 0
+            st.metric("丢包率", f"{loss:.1f}%")
+
+        # 心跳间隔图
+        if len(hb_list) >= 2:
+            intervals = [hb_list[i]['timestamp'] - hb_list[i-1]['timestamp'] for i in range(1, len(hb_list))]
+            seqs = [hb_list[i]['seq'] for i in range(1, len(hb_list))]
+            
+            fig_interval = go.Figure()
+            fig_interval.add_trace(go.Scatter(x=seqs, y=intervals, mode='lines+markers', name='心跳间隔', line=dict(color='orange')))
+            fig_interval.add_hline(y=1.0, line_dash='dash', line_color='green', annotation_text='目标1秒')
+            fig_interval.update_layout(title='心跳间隔精确度', xaxis_title='序列号', yaxis_title='秒', height=300)
+            st.plotly_chart(fig_interval, use_container_width=True)
+
+        # 心跳趋势图
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df['time'], y=df['seq'], mode='lines+markers', name='序列号', line=dict(color='blue')))
+        fig.update_layout(title='心跳序列号趋势', xaxis_title='时间', yaxis_title='序列号', height=300)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 数据表格
+        st.subheader("心跳数据")
         st.dataframe(df[['time_ms', 'seq']].tail(15), use_container_width=True)
     else:
-        st.info("等待心跳...")
+        st.info("等待心跳接入...")
 
 # ==================== 航线规划（点击圈选） ====================
 else:
