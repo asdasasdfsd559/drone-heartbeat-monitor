@@ -70,7 +70,7 @@ def wgs84_to_gcj02(lng, lat):
     return lng + 0.0005, lat + 0.0003
 
 # ==================== 地图函数 ====================
-def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
+def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system, pending_polygon=None):
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
     else:
@@ -83,7 +83,6 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
         tiles='OpenStreetMap'
     )
     
-    # 高德卫星图
     folium.TileLayer(
         'https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
         attr='高德地图',
@@ -91,12 +90,10 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
         control=True
     ).add_to(m)
     
-    # Home点
     if home_point:
         folium.Marker([display_lat, display_lng], popup='🏠 学校中心点', icon=folium.Icon(color='green')).add_to(m)
         folium.Circle(radius=100, location=[display_lat, display_lng], color='green', fill=True, fill_opacity=0.15).add_to(m)
     
-    # 航点
     if waypoints:
         points = []
         for i, wp in enumerate(waypoints):
@@ -105,7 +102,6 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             folium.Marker([wp[1], wp[0]], popup=f'航点 {i+1}', icon=folium.Icon(color=color)).add_to(m)
         folium.PolyLine(points, color='blue', weight=3).add_to(m)
     
-    # 障碍物
     for obs in obstacles:
         polygon_points = [[p[1], p[0]] for p in obs['points']]
         height = obs.get('height', 10)
@@ -115,7 +111,6 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             fill_color = '#ff6666'
         else:
             fill_color = '#ff3333'
-        
         folium.Polygon(
             locations=polygon_points,
             color='red',
@@ -127,7 +122,20 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             tooltip=f"{obs['name']}"
         ).add_to(m)
     
-    # 绘制工具
+    # 如果有暂存的多边形，也显示出来（半透明预览）
+    if pending_polygon and len(pending_polygon) >= 3:
+        preview_points = [[p[1], p[0]] for p in pending_polygon]
+        folium.Polygon(
+            locations=preview_points,
+            color='orange',
+            weight=3,
+            fill=True,
+            fill_color='orange',
+            fill_opacity=0.3,
+            popup="待保存的障碍物",
+            tooltip="待保存"
+        ).add_to(m)
+    
     draw = plugins.Draw(
         draw_options={
             'polygon': {
@@ -144,7 +152,6 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
         edit_options={'edit': True, 'remove': True}
     )
     draw.add_to(m)
-    
     folium.LayerControl().add_to(m)
     return m
 
@@ -156,7 +163,6 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
-# 学校坐标
 if 'home_point' not in st.session_state:
     st.session_state.home_point = (118.749413, 32.234097)
 
@@ -172,16 +178,20 @@ if 'b_point' not in st.session_state:
 if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
-# 障碍物
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
-# 暂存的多边形顶点
 if 'pending_polygon' not in st.session_state:
     st.session_state.pending_polygon = None
 
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
+
+# 保留用户输入的值
+if 'temp_name' not in st.session_state:
+    st.session_state.temp_name = ""
+if 'temp_height' not in st.session_state:
+    st.session_state.temp_height = 20
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -223,19 +233,15 @@ with st.sidebar:
         
         home_lng = st.number_input("经度", value=st.session_state.home_point[0], format="%.6f", key="home_lng")
         home_lat = st.number_input("纬度", value=st.session_state.home_point[1], format="%.6f", key="home_lat")
-        
         if st.button("更新中心点", key="update_home"):
             st.session_state.home_point = (home_lng, home_lat)
             st.rerun()
         
         st.markdown("---")
         st.subheader("📍 起点 A")
-        
         a_lng = st.number_input("经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
         a_lat = st.number_input("纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
-        
         st.subheader("📍 终点 B")
-        
         b_lng = st.number_input("经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
         b_lat = st.number_input("纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
         
@@ -255,55 +261,60 @@ with st.sidebar:
         
         st.markdown("---")
         st.subheader("🚧 障碍物管理")
-        
         st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # ========== 添加障碍物区域（固定显示，不弹窗） ==========
-        st.markdown("### ➕ 添加新障碍物")
-        
-        # 显示当前暂存多边形状态
+        # 显示当前暂存的多边形状态
         if st.session_state.pending_polygon:
-            st.success(f"✅ 已绘制多边形，共 {len(st.session_state.pending_polygon)} 个顶点")
+            st.success(f"✏️ 已绘制多边形，共 {len(st.session_state.pending_polygon)} 个顶点")
+            if st.button("🔄 应用多边形到地图", key="apply_polygon"):
+                # 强制刷新地图以显示暂存的多边形（通过rerun重新创建地图）
+                st.rerun()
         else:
-            st.info("📐 请先使用地图右上角的多边形工具绘制区域")
+            st.info("📐 使用地图右上角的多边形工具绘制区域，绘制后点击「应用多边形到地图」")
         
-        # 输入框始终可见
-        new_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="new_name_input")
-        new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="new_height_input")
+        # 输入框：值绑定到session_state，不会因rerun丢失
+        new_name = st.text_input("障碍物名称", value=st.session_state.temp_name, key="new_name_input")
+        new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=st.session_state.temp_height, step=5, key="new_height_input")
+        # 保存用户输入到session_state
+        st.session_state.temp_name = new_name
+        st.session_state.temp_height = new_height
         
-        if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
-            if st.session_state.pending_polygon and len(st.session_state.pending_polygon) >= 3:
-                if new_name:
-                    st.session_state.obstacles.append({
-                        'id': st.session_state.next_id,
-                        'name': new_name,
-                        'height': new_height,
-                        'points': st.session_state.pending_polygon,
-                        'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    st.session_state.next_id += 1
-                    st.session_state.pending_polygon = None
-                    st.success(f"✅ 已添加障碍物: {new_name}")
-                    st.rerun()
+        col_save1, col_save2 = st.columns(2)
+        with col_save1:
+            if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
+                if st.session_state.pending_polygon and len(st.session_state.pending_polygon) >= 3:
+                    if new_name:
+                        st.session_state.obstacles.append({
+                            'id': st.session_state.next_id,
+                            'name': new_name,
+                            'height': new_height,
+                            'points': st.session_state.pending_polygon,
+                            'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        st.session_state.next_id += 1
+                        st.session_state.pending_polygon = None
+                        st.session_state.temp_name = ""
+                        st.session_state.temp_height = 20
+                        st.success(f"✅ 已添加障碍物: {new_name}")
+                        st.rerun()
+                    else:
+                        st.error("请输入障碍物名称")
                 else:
-                    st.error("请输入障碍物名称")
-            else:
-                st.error("请先在地图上绘制多边形（至少3个顶点）")
+                    st.error("请先绘制多边形并点击「应用多边形到地图」")
+        with col_save2:
+            if st.button("🗑️ 放弃当前多边形", key="discard_btn", use_container_width=True):
+                st.session_state.pending_polygon = None
+                st.rerun()
         
         st.markdown("---")
-        
-        # ========== 删除障碍物 ==========
         if st.session_state.obstacles:
             st.markdown("### 🗑️ 删除障碍物")
-            
             del_options = [f"{o['id']}. {o['name']} (高度:{o['height']}米)" for o in st.session_state.obstacles]
             del_selected = st.selectbox("选择要删除的障碍物", del_options, key="del_select")
-            
             if st.button("🗑️ 删除", key="delete_btn", use_container_width=True):
                 del_id = int(del_selected.split('.')[0])
                 st.session_state.obstacles = [o for o in st.session_state.obstacles if o['id'] != del_id]
                 st.rerun()
-            
             if st.button("🗑️ 清空所有", key="clear_all", use_container_width=True):
                 st.session_state.obstacles = []
                 st.session_state.pending_polygon = None
@@ -313,57 +324,40 @@ with st.sidebar:
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控 - 心跳数据")
     st.caption("🕐 北京时间 (UTC+8)")
-    
     heartbeats, seq, _ = st.session_state.heartbeat_mgr.get_data()
-    
     if heartbeats:
         df = pd.DataFrame(heartbeats)
-        
         col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("总心跳数", len(df))
-        with col2:
-            st.metric("当前序列号", seq)
-        
+        col1.metric("总心跳数", len(df))
+        col2.metric("当前序列号", seq)
         if len(heartbeats) >= 2:
             intervals = [heartbeats[i]['timestamp'] - heartbeats[i-1]['timestamp'] for i in range(1, len(heartbeats))]
             avg_interval = sum(intervals) / len(intervals)
             st.metric("平均间隔", f"{avg_interval:.3f}秒")
-        
         status, time_since = st.session_state.heartbeat_mgr.get_connection_status()
-        
-        with col3:
-            st.metric("连接状态", "✅ 在线" if status == "在线" else "❌ 离线")
-        
-        with col4:
-            expected = seq
-            received = len(df)
-            loss_rate = (expected - received) / expected * 100 if expected > 0 else 0
-            st.metric("丢包率", f"{loss_rate:.1f}%")
-        
+        col3.metric("连接状态", "✅ 在线" if status == "在线" else "❌ 离线")
+        expected = seq
+        received = len(df)
+        loss_rate = (expected - received) / expected * 100 if expected > 0 else 0
+        col4.metric("丢包率", f"{loss_rate:.1f}%")
         if status == "超时":
             st.error(f"⚠️ 连接超时！已 {time_since:.1f} 秒未收到心跳")
-        
         if len(heartbeats) >= 2:
             fig_interval = go.Figure()
             intervals_data = [heartbeats[i]['timestamp'] - heartbeats[i-1]['timestamp'] for i in range(1, len(heartbeats))]
             seqs = [heartbeats[i]['seq'] for i in range(1, len(heartbeats))]
-            
             fig_interval.add_trace(go.Scatter(x=seqs, y=intervals_data, mode='lines+markers', name='心跳间隔', line=dict(color='orange', width=2)))
             fig_interval.add_hline(y=1.0, line_dash="dash", line_color="green", annotation_text="目标间隔1秒")
             fig_interval.update_layout(title="心跳间隔精确度分析", xaxis_title="序列号", yaxis_title="间隔 (秒)", height=300)
             st.plotly_chart(fig_interval, use_container_width=True)
-        
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df['time'], y=df['seq'], mode='lines+markers', name='心跳', line=dict(color='blue', width=2)))
         fig.update_layout(title="心跳序列号趋势", xaxis_title="北京时间", yaxis_title="序列号", height=300)
         st.plotly_chart(fig, use_container_width=True)
-        
         st.subheader("📋 详细心跳数据")
         display_df = df[['time_ms', 'seq']].tail(20).copy()
         display_df.columns = ['北京时间 (精确到毫秒)', '序列号']
         st.dataframe(display_df, use_container_width=True)
-        
         latest = heartbeats[-1]
         st.success(f"✅ 最新心跳: {latest['time_ms']} | 序列号: {latest['seq']}")
         st.caption(f"🕐 当前北京时间: {get_beijing_time().strftime('%Y年%m月%d日 %H:%M:%S')}")
@@ -372,7 +366,7 @@ if "飞行监控" in st.session_state.page:
 
 else:
     st.header("🗺️ 航线规划 - 南京科技职业学院")
-    st.caption("🎨 使用地图右上角的多边形工具绘制障碍物区域")
+    st.caption("🎨 使用地图右上角的多边形工具绘制障碍物区域，绘制后点击「应用多边形到地图」预览，再填写信息保存")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -401,35 +395,37 @@ else:
                 st.session_state.waypoints,
                 st.session_state.home_point,
                 st.session_state.obstacles,
-                st.session_state.coord_system
+                st.session_state.coord_system,
+                st.session_state.pending_polygon  # 传入暂存多边形用于预览
             )
             
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 检测绘制完成的多边形 - 只暂存，不自动保存
+            # 检测新绘制的多边形（不自动刷新，只暂存）
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
-                    coordinates = draw_data['geometry']['coordinates'][0]
-                    points = [(coord[0], coord[1]) for coord in coordinates]
+                    coords = draw_data['geometry']['coordinates'][0]
+                    points = [(c[0], c[1]) for c in coords]
                     if len(points) >= 3:
-                        # 直接替换暂存的多边形（允许覆盖）
-                        st.session_state.pending_polygon = points
-                        st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在左侧输入名称和高度后保存")
-                        st.rerun()
+                        # 仅当新绘制的多边形与当前暂存的不同时才更新
+                        if st.session_state.pending_polygon != points:
+                            st.session_state.pending_polygon = points
+                            st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点。请点击「应用多边形到地图」预览，然后填写信息保存。")
+                            # 注意：这里不rerun，避免刷新丢失绘图状态；但用户需要点击“应用多边形”才会刷新地图显示预览
+                            # 为了让地图立即显示新绘制的多边形，我们可以静默rerun，但会丢失绘图工具状态。
+                            # 更好的做法：让用户手动点击“应用多边形”来刷新地图显示预览。
             
             st.success("✅ 地图加载成功")
-            st.info("💡 提示：点击右上角多边形图标，在地图上点击画区域，双击完成绘制")
+            st.info("💡 提示：点击右上角多边形图标绘制区域，双击完成。绘制后点击左侧「应用多边形到地图」预览，再填写名称高度保存。")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
             st.info("请刷新页面重试")
     
-    # 显示障碍物列表
     if st.session_state.obstacles:
         st.markdown("---")
         st.subheader("🚧 当前障碍物列表")
-        
         for i, obs in enumerate(st.session_state.obstacles):
             with st.expander(f"障碍物 {i+1}: {obs['name']} (高度: {obs['height']}米)"):
                 st.write(f"**创建时间:** {obs['created_at']}")
