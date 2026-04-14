@@ -75,7 +75,7 @@ class CoordTransform:
     def gcj02_to_wgs84(lng, lat):
         return lng - 0.0005, lat - 0.0003
 
-# ==================== 地图函数（带多边形绘制） ====================
+# ==================== 地图函数 ====================
 def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obstacles, coord_system):
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
@@ -89,14 +89,12 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
         tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
         attr='高德地图'
     )
-    
     folium.TileLayer(
         'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
         name='高德街道图',
         attr='高德地图',
         control=True
     ).add_to(m)
-    
     folium.TileLayer('OpenStreetMap', name='OSM街道图', control=True).add_to(m)
     
     if home_point:
@@ -127,9 +125,9 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             ).add_to(m)
         folium.PolyLine(points, color='blue', weight=3, opacity=0.8).add_to(m)
     
-    for obstacle in obstacles:
+    for obs in obstacles:
         polygon_points = []
-        for point in obstacle['points']:
+        for point in obs['points']:
             if coord_system == 'gcj02':
                 lng, lat = point[0], point[1]
             else:
@@ -141,8 +139,8 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
             weight=3,
             fill=True,
             fill_opacity=0.4,
-            popup=f"🚧 {obstacle['name']}",
-            tooltip=f"{obstacle['name']}"
+            popup=f"🚧 {obs['name']}",
+            tooltip=f"{obs['name']}"
         ).add_to(m)
     
     draw = plugins.Draw(
@@ -169,7 +167,7 @@ def create_map_with_drawing(center_lng, center_lat, waypoints, home_point, obsta
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 初始化 ====================
+# ==================== 初始化 session_state ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr = HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -193,12 +191,11 @@ if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
 if 'obstacles' not in st.session_state:
-    st.session_state.obstacles = []   # 清空示例，从空开始
+    st.session_state.obstacles = []
 
 if 'next_obstacle_id' not in st.session_state:
     st.session_state.next_obstacle_id = 1
 
-# ========== 新增：暂存新绘制的多边形顶点 ==========
 if 'temp_polygon' not in st.session_state:
     st.session_state.temp_polygon = None
 
@@ -232,7 +229,7 @@ with st.sidebar:
         coord_system = st.selectbox(
             "坐标系",
             options=['wgs84', 'gcj02'],
-            format_func=lambda x: 'WGS-84 (GPS坐标)' if x == 'wgs84' else 'GCJ-02 (高德/百度)',
+            format_func=lambda x: 'WGS-84 (GPS)' if x == 'wgs84' else 'GCJ-02 (高德/百度)',
             key="coord_select"
         )
         st.session_state.coord_system = coord_system
@@ -246,10 +243,10 @@ with st.sidebar:
             st.rerun()
         
         st.markdown("---")
-        st.subheader("📍 起点 A (教学楼)")
+        st.subheader("📍 起点 A")
         a_lng = st.number_input("经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
         a_lat = st.number_input("纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
-        st.subheader("📍 终点 B (操场)")
+        st.subheader("📍 终点 B")
         b_lng = st.number_input("经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
         b_lat = st.number_input("纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
         
@@ -271,7 +268,7 @@ with st.sidebar:
         st.subheader("🚧 障碍物管理")
         st.info(f"当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # ========== 显示待保存的多边形表单 ==========
+        # 暂存多边形保存表单
         if st.session_state.temp_polygon:
             st.warning("✏️ 检测到新绘制的多边形，请填写信息后保存")
             new_name = st.text_input("障碍物名称", key="temp_name", placeholder="例如: 教学楼")
@@ -301,15 +298,11 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("🗑️ 删除障碍物")
         if st.session_state.obstacles:
-            obs_to_delete = st.selectbox(
-                "选择要删除的障碍物",
-                options=[f"{i+1}. {o['name']} (高度:{o['height']}米)" for i, o in enumerate(st.session_state.obstacles)],
-                key="obs_to_delete"
-            )
+            obs_options = [f"{i+1}. {o['name']} (高度:{o['height']}米)" for i, o in enumerate(st.session_state.obstacles)]
+            obs_to_delete = st.selectbox("选择要删除的障碍物", obs_options, key="obs_to_delete")
             if st.button("删除选中障碍物", key="delete_obs"):
                 idx = int(obs_to_delete.split('.')[0]) - 1
-                deleted = st.session_state.obstacles.pop(idx)
-                st.success(f"已删除: {deleted['name']}")
+                st.session_state.obstacles.pop(idx)
                 st.rerun()
         
         if st.button("🗑️ 清空所有障碍物", key="clear_all_obs"):
@@ -364,32 +357,23 @@ if "飞行监控" in st.session_state.page:
         st.info("等待心跳数据...")
 
 else:
-    st.header("🗺️ 航线规划 - 南京科技职业学院")
-    st.caption("🎨 使用右侧工具栏的多边形工具绘制障碍物区域，绘制后双击完成，然后在左侧填写名称和高度保存")
+    st.header("🗺️ 航线规划 - 多边形圈选障碍物")
+    st.caption("1. 点击地图右上角多边形工具绘制区域，双击完成\n2. 在左侧输入名称和高度，点击「确认保存」")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info(f"🏫 学校: 南京科技职业学院")
-        st.info(f"📍 中心点: {st.session_state.home_point[0]:.6f}, {st.session_state.home_point[1]:.6f}")
-    with col2:
-        if st.session_state.waypoints:
-            st.success(f"✈️ 当前航线: 教学楼 → 操场")
-            st.success(f"航点数: {len(st.session_state.waypoints)}")
-        else:
-            st.warning("⚠️ 暂无航线，请设置起点和终点后点击「生成航线」")
-        st.info(f"🚧 障碍物数量: {len(st.session_state.obstacles)}")
+    if st.session_state.waypoints:
+        a, b = st.session_state.waypoints
+        dx = (b[0] - a[0]) * 111000 * math.cos(math.radians((a[1] + b[1]) / 2))
+        dy = (b[1] - a[1]) * 111000
+        distance = math.sqrt(dx*dx + dy*dy)
+        st.info(f"✈️ 当前航线距离: {distance:.1f} 米")
+    else:
+        st.warning("⚠️ 暂无航线，请在左侧设置起点和终点")
     
     st.markdown("---")
     
-    with st.spinner("加载高德卫星地图..."):
+    with st.spinner("加载地图..."):
         try:
-            if st.session_state.waypoints:
-                all_points = [st.session_state.home_point] + st.session_state.waypoints
-                center_lng = sum(p[0] for p in all_points) / len(all_points)
-                center_lat = sum(p[1] for p in all_points) / len(all_points)
-            else:
-                center_lng, center_lat = st.session_state.home_point
-            
+            center_lng, center_lat = st.session_state.home_point
             m = create_map_with_drawing(
                 center_lng, center_lat,
                 st.session_state.waypoints,
@@ -397,29 +381,24 @@ else:
                 st.session_state.obstacles,
                 st.session_state.coord_system
             )
-            
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # ========== 修改点：只暂存多边形，不自动保存 ==========
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coords = draw_data['geometry']['coordinates'][0]
-                    points = [(coord[0], coord[1]) for coord in coords]
+                    points = [(c[0], c[1]) for c in coords]
                     if len(points) >= 3 and st.session_state.temp_polygon is None:
                         st.session_state.temp_polygon = points
-                        st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点，请在左侧填写名称和高度后保存")
+                        st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点")
                         st.rerun()
             
-            st.success("✅ 高德卫星地图加载成功")
-            st.caption("📸 地图类型：高德卫星图 + 道路标注")
-            st.info("🎨 使用地图右上角的绘制工具，点击多边形图标后在地图上点击画区域，双击完成绘制")
+            st.success("✅ 地图加载成功")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
             st.info("请刷新页面重试")
     
-    # 显示障碍物列表
     if st.session_state.obstacles:
         st.markdown("---")
         st.subheader("🚧 当前障碍物列表")
@@ -427,24 +406,7 @@ else:
             with st.expander(f"障碍物 {i+1}: {obs['name']} (高度: {obs['height']}米)"):
                 st.write(f"**创建时间:** {obs['created_at']}")
                 st.write(f"**顶点数量:** {len(obs['points'])} 个")
-    
-    # 航线信息
-    if st.session_state.waypoints and len(st.session_state.waypoints) >= 2:
-        st.markdown("---")
-        st.subheader("📊 航线信息")
-        a = st.session_state.waypoints[0]
-        b = st.session_state.waypoints[-1]
-        dx = (b[0] - a[0]) * 111000 * math.cos(math.radians((a[1] + b[1]) / 2))
-        dy = (b[1] - a[1]) * 111000
-        distance = math.sqrt(dx*dx + dy*dy)
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("起点 A (教学楼)", f"{a[0]:.6f}, {a[1]:.6f}")
-        with col2:
-            st.metric("终点 B (操场)", f"{b[0]:.6f}, {b[1]:.6f}")
-        with col3:
-            st.metric("直线距离", f"{distance:.1f} 米")
 
-# 每0.5秒刷新页面（心跳自动刷新，但不影响暂存的多边形）
+# 自动刷新心跳
 time.sleep(0.5)
 st.rerun()
