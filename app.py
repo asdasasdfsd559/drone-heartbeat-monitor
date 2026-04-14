@@ -66,7 +66,7 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 内嵌圈选组件（带明确按钮和提示） ====================
+# ==================== 内嵌圈选组件（使用高德地图瓦片 + 显式按钮） ====================
 def obstacle_editor_component():
     obstacles_json = json.dumps(st.session_state.get('obstacles', []))
     map_html = f"""
@@ -87,37 +87,36 @@ def obstacle_editor_component():
                 box-shadow: 0 0 10px rgba(0,0,0,0.2); font-size: 12px;
                 max-width: 250px;
             }}
-            .instruction {{
-                position: absolute; top: 10px; right: 10px; z-index: 1000;
-                background: rgba(0,0,0,0.7); color: white; padding: 5px 10px;
-                border-radius: 5px; font-size: 12px; pointer-events: none;
-            }}
             .obstacle-list {{ max-height: 150px; overflow-y: auto; margin-top: 5px; }}
             .obstacle-item {{ padding: 3px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }}
-            button {{ margin: 2px; padding: 2px 6px; cursor: pointer; }}
+            button {{ margin: 2px; padding: 4px 8px; cursor: pointer; }}
+            .draw-btn {{
+                background: #1890ff; color: white; border: none; border-radius: 4px;
+                padding: 6px 12px; margin-bottom: 8px; width: 100%;
+            }}
         </style>
     </head>
     <body>
         <div id="map"></div>
-        <div class="instruction">
-            ✏️ 绘制方法：点击右上角 <strong>多边形工具</strong> 📐，在地图上点击顶点，<strong>双击</strong>完成绘制
-        </div>
         <div class="controls">
-            <strong>✏️ 障碍物列表</strong><br>
-            <button id="syncBtn" style="background:#1890ff; color:white; border:none;">💾 保存到应用</button>
+            <button id="drawBtn" class="draw-btn">✏️ 开始绘制多边形</button>
+            <button id="syncBtn" style="background:#52c41a;">💾 保存到应用</button>
             <div id="obstacleList" class="obstacle-list">
                 <strong>已添加障碍物：</strong><br>
             </div>
         </div>
         <script>
+            // 使用高德卫星图（国内可用，无需key）
             var map = L.map('map').setView([32.234097, 118.749413], 18);
-            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                attribution: '&copy; OSM'
+            L.tileLayer('https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {{
+                attribution: '高德地图',
+                maxZoom: 18
             }}).addTo(map);
             
             var obstacles = {obstacles_json};
             var drawnItems = new L.FeatureGroup();
             map.addLayer(drawnItems);
+            var drawControl = null;
             
             function render() {{
                 drawnItems.clearLayers();
@@ -145,11 +144,21 @@ def obstacle_editor_component():
                 render();
             }};
             
-            var drawControl = new L.Control.Draw({{
-                draw: {{ polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false }},
-                edit: {{ featureGroup: drawnItems, remove: true }}
-            }});
-            map.addControl(drawControl);
+            // 启用绘图模式
+            function startDrawing() {{
+                if (drawControl) {{
+                    map.removeControl(drawControl);
+                }}
+                drawControl = new L.Control.Draw({{
+                    draw: {{ polygon: true, polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false }},
+                    edit: {{ featureGroup: drawnItems, remove: true }}
+                }});
+                map.addControl(drawControl);
+                // 自动激活多边形绘制
+                new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+            }}
+            
+            document.getElementById('drawBtn').onclick = startDrawing;
             
             map.on(L.Draw.Event.CREATED, function(e) {{
                 var layer = e.layer;
@@ -161,6 +170,8 @@ def obstacle_editor_component():
                 if (isNaN(height)) height = 20;
                 obstacles.push({{ name: name, height: height, points: points }});
                 render();
+                // 绘制完成后移除绘图控件，避免干扰
+                if (drawControl) map.removeControl(drawControl);
             }});
             
             document.getElementById('syncBtn').onclick = function() {{
@@ -241,7 +252,7 @@ with st.sidebar:
         a_lng = st.number_input("起点经度", value=st.session_state.a_point[0], format="%.6f", key="a_lng")
         a_lat = st.number_input("起点纬度", value=st.session_state.a_point[1], format="%.6f", key="a_lat")
         b_lng = st.number_input("终点经度", value=st.session_state.b_point[0], format="%.6f", key="b_lng")
-        b_lat = st.number_input("终点纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
+        b_lat = st.number_input("起点纬度", value=st.session_state.b_point[1], format="%.6f", key="b_lat")
         if st.button("✈️ 生成/更新航线", key="gen_route"):
             st.session_state.a_point = (a_lng, a_lat)
             st.session_state.b_point = (b_lng, b_lat)
@@ -259,7 +270,7 @@ with st.sidebar:
             st.rerun()
         
         st.markdown("---")
-        st.info("💡 使用下方地图工具：点击右上角多边形图标 → 在地图上点击顶点 → 双击完成 → 输入名称和高度 → 点击「保存到应用」")
+        st.info("💡 使用下方地图：点击「开始绘制多边形」按钮 → 在地图上点击顶点 → 双击完成 → 输入名称和高度 → 点击「保存到应用」")
 
 # ==================== 主内容 ====================
 if "飞行监控" in st.session_state.page:
@@ -316,7 +327,7 @@ else:
     else:
         st.warning("⚠️ 请先在左侧设置起点和终点")
     
-    # 显示内嵌圈选组件（带明确提示）
+    # 显示内嵌圈选组件（高德地图瓦片 + 显式按钮）
     obstacle_editor_component()
     
     # 显示最终障碍物地图
