@@ -66,9 +66,8 @@ class HeartbeatManager:
             time_since = (now - last_dt).total_seconds()
             return ("在线", time_since) if time_since < 3 else ("超时", time_since)
 
-# ==================== 内嵌圈选组件 ====================
+# ==================== 内嵌圈选组件（带明确按钮和提示） ====================
 def obstacle_editor_component():
-    """返回一个独立的HTML组件，用于多边形圈选、设置高度、保存，并支持数据同步到Streamlit"""
     obstacles_json = json.dumps(st.session_state.get('obstacles', []))
     map_html = f"""
     <!DOCTYPE html>
@@ -86,6 +85,12 @@ def obstacle_editor_component():
                 position: absolute; bottom: 20px; left: 10px; z-index: 1000;
                 background: white; padding: 8px; border-radius: 8px;
                 box-shadow: 0 0 10px rgba(0,0,0,0.2); font-size: 12px;
+                max-width: 250px;
+            }}
+            .instruction {{
+                position: absolute; top: 10px; right: 10px; z-index: 1000;
+                background: rgba(0,0,0,0.7); color: white; padding: 5px 10px;
+                border-radius: 5px; font-size: 12px; pointer-events: none;
             }}
             .obstacle-list {{ max-height: 150px; overflow-y: auto; margin-top: 5px; }}
             .obstacle-item {{ padding: 3px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }}
@@ -94,9 +99,12 @@ def obstacle_editor_component():
     </head>
     <body>
         <div id="map"></div>
+        <div class="instruction">
+            ✏️ 绘制方法：点击右上角 <strong>多边形工具</strong> 📐，在地图上点击顶点，<strong>双击</strong>完成绘制
+        </div>
         <div class="controls">
-            <strong>✏️ 圈选障碍物</strong><br>
-            <button id="syncBtn">💾 保存到应用</button>
+            <strong>✏️ 障碍物列表</strong><br>
+            <button id="syncBtn" style="background:#1890ff; color:white; border:none;">💾 保存到应用</button>
             <div id="obstacleList" class="obstacle-list">
                 <strong>已添加障碍物：</strong><br>
             </div>
@@ -251,7 +259,7 @@ with st.sidebar:
             st.rerun()
         
         st.markdown("---")
-        st.info("💡 使用下方工具绘制多边形：绘制后弹出对话框输入名称和高度，点击「保存到应用」同步数据。")
+        st.info("💡 使用下方地图工具：点击右上角多边形图标 → 在地图上点击顶点 → 双击完成 → 输入名称和高度 → 点击「保存到应用」")
 
 # ==================== 主内容 ====================
 if "飞行监控" in st.session_state.page:
@@ -308,12 +316,12 @@ else:
     else:
         st.warning("⚠️ 请先在左侧设置起点和终点")
     
-    # 显示内嵌圈选组件
+    # 显示内嵌圈选组件（带明确提示）
     obstacle_editor_component()
     
-    # 显示主地图（用于展示最终障碍物）
+    # 显示最终障碍物地图
     st.markdown("---")
-    st.subheader("📌 最终障碍物地图")
+    st.subheader("📌 已保存的障碍物地图")
     m = folium.Map(location=[SCHOOL_CENTER[1], SCHOOL_CENTER[0]], zoom_start=18, control_scale=True)
     folium.TileLayer('https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', attr='高德地图').add_to(m)
     for obs in st.session_state.obstacles:
