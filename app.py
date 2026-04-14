@@ -70,7 +70,7 @@ def wgs84_to_gcj02(lng, lat):
     return lng + 0.0005, lat + 0.0003
 
 # ==================== 地图函数 ====================
-def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_system, pending_polygon=None):
+def create_map(center_lng, center_lat, waypoints, home_point, obstacles, pending_polygon, coord_system):
     if coord_system == 'gcj02':
         display_lng, display_lat = center_lng, center_lat
     else:
@@ -102,6 +102,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             folium.Marker([wp[1], wp[0]], popup=f'航点 {i+1}', icon=folium.Icon(color=color)).add_to(m)
         folium.PolyLine(points, color='blue', weight=3).add_to(m)
     
+    # 已保存的障碍物
     for obs in obstacles:
         polygon_points = [[p[1], p[0]] for p in obs['points']]
         height = obs.get('height', 10)
@@ -122,7 +123,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             tooltip=f"{obs['name']}"
         ).add_to(m)
     
-    # 如果有暂存的多边形，也显示出来（半透明预览）
+    # 临时多边形（橙色预览）
     if pending_polygon and len(pending_polygon) >= 3:
         preview_points = [[p[1], p[0]] for p in pending_polygon]
         folium.Polygon(
@@ -187,7 +188,7 @@ if 'pending_polygon' not in st.session_state:
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
 
-# 保留用户输入的值
+# 保存用户输入的临时值，防止刷新丢失
 if 'temp_name' not in st.session_state:
     st.session_state.temp_name = ""
 if 'temp_height' not in st.session_state:
@@ -230,7 +231,6 @@ with st.sidebar:
         
         st.markdown("---")
         st.subheader("🏠 学校中心点")
-        
         home_lng = st.number_input("经度", value=st.session_state.home_point[0], format="%.6f", key="home_lng")
         home_lat = st.number_input("纬度", value=st.session_state.home_point[1], format="%.6f", key="home_lat")
         if st.button("更新中心点", key="update_home"):
@@ -263,24 +263,19 @@ with st.sidebar:
         st.subheader("🚧 障碍物管理")
         st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # 显示当前暂存的多边形状态
         if st.session_state.pending_polygon:
             st.success(f"✏️ 已绘制多边形，共 {len(st.session_state.pending_polygon)} 个顶点")
-            if st.button("🔄 应用多边形到地图", key="apply_polygon"):
-                # 强制刷新地图以显示暂存的多边形（通过rerun重新创建地图）
-                st.rerun()
         else:
-            st.info("📐 使用地图右上角的多边形工具绘制区域，绘制后点击「应用多边形到地图」")
+            st.info("📐 使用地图右上角的多边形工具绘制区域，绘制后自动捕获")
         
-        # 输入框：值绑定到session_state，不会因rerun丢失
+        # 输入框绑定到 session_state
         new_name = st.text_input("障碍物名称", value=st.session_state.temp_name, key="new_name_input")
         new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=st.session_state.temp_height, step=5, key="new_height_input")
-        # 保存用户输入到session_state
         st.session_state.temp_name = new_name
         st.session_state.temp_height = new_height
         
-        col_save1, col_save2 = st.columns(2)
-        with col_save1:
+        col_save, col_discard = st.columns(2)
+        with col_save:
             if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
                 if st.session_state.pending_polygon and len(st.session_state.pending_polygon) >= 3:
                     if new_name:
@@ -300,8 +295,8 @@ with st.sidebar:
                     else:
                         st.error("请输入障碍物名称")
                 else:
-                    st.error("请先绘制多边形并点击「应用多边形到地图」")
-        with col_save2:
+                    st.error("请先在地图上绘制多边形")
+        with col_discard:
             if st.button("🗑️ 放弃当前多边形", key="discard_btn", use_container_width=True):
                 st.session_state.pending_polygon = None
                 st.rerun()
@@ -366,7 +361,7 @@ if "飞行监控" in st.session_state.page:
 
 else:
     st.header("🗺️ 航线规划 - 南京科技职业学院")
-    st.caption("🎨 使用地图右上角的多边形工具绘制障碍物区域，绘制后点击「应用多边形到地图」预览，再填写信息保存")
+    st.caption("🎨 使用地图右上角的多边形工具绘制障碍物区域，绘制后自动捕获，填写名称高度后保存")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -395,29 +390,26 @@ else:
                 st.session_state.waypoints,
                 st.session_state.home_point,
                 st.session_state.obstacles,
-                st.session_state.coord_system,
-                st.session_state.pending_polygon  # 传入暂存多边形用于预览
+                st.session_state.pending_polygon,
+                st.session_state.coord_system
             )
             
             output = st_folium(m, width=1000, height=600, returned_objects=["last_draw"])
             
-            # 检测新绘制的多边形（不自动刷新，只暂存）
+            # 检测新绘制的多边形
             if output and output.get('last_draw') is not None:
                 draw_data = output['last_draw']
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coords = draw_data['geometry']['coordinates'][0]
                     points = [(c[0], c[1]) for c in coords]
                     if len(points) >= 3:
-                        # 仅当新绘制的多边形与当前暂存的不同时才更新
                         if st.session_state.pending_polygon != points:
                             st.session_state.pending_polygon = points
-                            st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点。请点击「应用多边形到地图」预览，然后填写信息保存。")
-                            # 注意：这里不rerun，避免刷新丢失绘图状态；但用户需要点击“应用多边形”才会刷新地图显示预览
-                            # 为了让地图立即显示新绘制的多边形，我们可以静默rerun，但会丢失绘图工具状态。
-                            # 更好的做法：让用户手动点击“应用多边形”来刷新地图显示预览。
+                            st.success(f"✅ 已捕获多边形，共 {len(points)} 个顶点。请填写名称和高度后保存。")
+                            st.rerun()
             
             st.success("✅ 地图加载成功")
-            st.info("💡 提示：点击右上角多边形图标绘制区域，双击完成。绘制后点击左侧「应用多边形到地图」预览，再填写名称高度保存。")
+            st.info("💡 提示：点击右上角多边形图标绘制区域，双击完成。绘制后自动捕获，无需额外操作。")
             
         except Exception as e:
             st.error(f"地图加载失败: {e}")
