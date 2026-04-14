@@ -105,7 +105,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
             folium.Marker([wp[1], wp[0]], popup=f'航点 {i+1}', icon=folium.Icon(color=color)).add_to(m)
         folium.PolyLine(points, color='blue', weight=3).add_to(m)
     
-    # 已保存的障碍物
+    # 障碍物
     for obs in obstacles:
         polygon_points = [[p[1], p[0]] for p in obs['points']]
         height = obs.get('height', 10)
@@ -176,9 +176,9 @@ if 'coord_system' not in st.session_state:
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
-# 待保存的多边形顶点
-if 'pending_points' not in st.session_state:
-    st.session_state.pending_points = None
+# 暂存的多边形顶点
+if 'pending_polygon' not in st.session_state:
+    st.session_state.pending_polygon = None
 
 if 'next_id' not in st.session_state:
     st.session_state.next_id = 1
@@ -256,34 +256,33 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("🚧 障碍物管理")
         
-        # 显示当前障碍物数量
         st.info(f"📊 当前障碍物数量: {len(st.session_state.obstacles)}")
         
-        # ========== 添加新障碍物（固定区域，不依赖弹窗） ==========
+        # ========== 添加障碍物区域（固定显示，不弹窗） ==========
         st.markdown("### ➕ 添加新障碍物")
         
-        # 显示待保存的多边形状态
-        if st.session_state.pending_points:
-            st.success(f"✅ 已绘制多边形，共 {len(st.session_state.pending_points)} 个顶点，请填写信息后保存")
+        # 显示当前暂存多边形状态
+        if st.session_state.pending_polygon:
+            st.success(f"✅ 已绘制多边形，共 {len(st.session_state.pending_polygon)} 个顶点")
         else:
-            st.info("📐 请先在地图上绘制多边形（点击右上角多边形工具）")
+            st.info("📐 请先使用地图右上角的多边形工具绘制区域")
         
-        # 输入框（使用稳定的key，确保每次都能获取到值）
-        new_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="new_obstacle_name")
-        new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="new_obstacle_height")
+        # 输入框始终可见
+        new_name = st.text_input("障碍物名称", placeholder="例如: 教学楼", key="new_name_input")
+        new_height = st.number_input("高度(米)", min_value=1, max_value=200, value=20, step=5, key="new_height_input")
         
-        if st.button("💾 保存障碍物", key="save_new_obstacle", use_container_width=True):
-            if st.session_state.pending_points and len(st.session_state.pending_points) >= 3:
+        if st.button("💾 保存障碍物", key="save_btn", use_container_width=True):
+            if st.session_state.pending_polygon and len(st.session_state.pending_polygon) >= 3:
                 if new_name:
                     st.session_state.obstacles.append({
                         'id': st.session_state.next_id,
                         'name': new_name,
                         'height': new_height,
-                        'points': st.session_state.pending_points,
+                        'points': st.session_state.pending_polygon,
                         'created_at': get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
                     })
                     st.session_state.next_id += 1
-                    st.session_state.pending_points = None
+                    st.session_state.pending_polygon = None
                     st.success(f"✅ 已添加障碍物: {new_name}")
                     st.rerun()
                 else:
@@ -307,7 +306,7 @@ with st.sidebar:
             
             if st.button("🗑️ 清空所有", key="clear_all", use_container_width=True):
                 st.session_state.obstacles = []
-                st.session_state.pending_points = None
+                st.session_state.pending_polygon = None
                 st.rerun()
 
 # ==================== 主内容 ====================
@@ -373,7 +372,7 @@ if "飞行监控" in st.session_state.page:
 
 else:
     st.header("🗺️ 航线规划 - 南京科技职业学院")
-    st.caption("🎨 点击右上角多边形工具绘制障碍物，绘制后双击完成，然后在左侧输入名称和高度")
+    st.caption("🎨 使用地图右上角的多边形工具绘制障碍物区域")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -413,8 +412,9 @@ else:
                 if draw_data and draw_data.get('geometry') and draw_data['geometry'].get('type') == 'Polygon':
                     coordinates = draw_data['geometry']['coordinates'][0]
                     points = [(coord[0], coord[1]) for coord in coordinates]
-                    if len(points) >= 3 and st.session_state.pending_points is None:
-                        st.session_state.pending_points = points
+                    if len(points) >= 3:
+                        # 直接替换暂存的多边形（允许覆盖）
+                        st.session_state.pending_polygon = points
                         st.success(f"✅ 已绘制多边形，共 {len(points)} 个顶点，请在左侧输入名称和高度后保存")
                         st.rerun()
             
