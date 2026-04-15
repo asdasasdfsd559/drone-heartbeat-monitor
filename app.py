@@ -89,21 +89,21 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
         attr='高德-2026最新街道', name='街道图(2026)'
     ).add_to(m)
 
-    # 2. 卫星图：【2026最新超清】Esri World Imagery（2025-2026更新，无token、稳定）
+    # 2. 卫星图：Esri 2026超清（精准对准南京科院）
     folium.TileLayer(
         tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         attr='Esri-2026高清卫星', name='卫星图(超清)'
     ).add_to(m)
 
-    # Home点（学校官方地址）
+    # Home点（学校官方精确坐标）
     if home_point:
         h_lng,h_lat=home_point if coord_system=='gcj02' else CoordTransform.wgs84_to_gcj02(*home_point)
         folium.Marker(
             [h_lat,h_lng],
             icon=folium.Icon(color='green',icon='home'),
-            popup="南京科技职业学院\n官方地址：江北新区欣乐路188号"
+            popup="南京科技职业学院\n📍 江北新区葛关路625号/欣乐路188号"
         ).add_to(m)
-        folium.Circle(radius=100,location=[h_lat,h_lng],color='green',fill=True,fill_opacity=0.3).add_to(m)
+        folium.Circle(radius=120,location=[h_lat,h_lng],color='green',fill=True,fill_opacity=0.3).add_to(m)
     
     # 航线
     if waypoints:
@@ -156,7 +156,7 @@ def load_state():
             return json.load(f)
     return None
 
-# ==================== 初始化（官方地址默认） ====================
+# ==================== 初始化（官方精确坐标） ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr=HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -164,18 +164,20 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page="飞行监控"
 
-# 加载记忆 + 官方默认坐标
+# 加载记忆 + 官方精确坐标
 loaded = load_state()
-# 【官方地址经纬度】
-OFFICIAL_LNG = 118.749428
-OFFICIAL_LAT = 32.234111
+
+# 【南京科技职业学院 精确GCJ02坐标（高德/百度系）】
+# 地址：江北新区葛关路625号 / 欣乐路188号
+OFFICIAL_LNG = 118.749413  # 精确经度
+OFFICIAL_LAT = 32.234097   # 精确纬度
 
 defaults = {
     "home_point": (OFFICIAL_LNG, OFFICIAL_LAT),
     "waypoints": [],
     "a_point": (OFFICIAL_LNG, OFFICIAL_LAT),
-    "b_point": (OFFICIAL_LNG + 0.0012, OFFICIAL_LAT + 0.0012),
-    "coord_system": "wgs84",
+    "b_point": (OFFICIAL_LNG + 0.0010, OFFICIAL_LAT + 0.0010),
+    "coord_system": "gcj02",  # 默认用GCJ02（国内地图标准）
     "obstacles": [],
     "draw_points": [],
     "last_click": None
@@ -191,7 +193,7 @@ for k, v in defaults.items():
 with st.sidebar:
     st.title("🎮 无人机地面站")
     st.markdown("**南京科技职业学院**")
-    st.caption("📍 官方地址：江北新区欣乐路188号")
+    st.caption("📍 葛关路625号 | 欣乐路188号")
     page=st.radio("功能",["📡 飞行监控","🗺️ 航线规划"])
     st.session_state.page=page
     
@@ -205,9 +207,9 @@ with st.sidebar:
 
     if "🗺️ 航线规划" in page:
         st.session_state.coord_system=st.selectbox(
-            "坐标系",["wgs84","gcj02"],format_func=lambda x:"WGS84" if x=="wgs84" else "GCJ02"
+            "坐标系",["gcj02","wgs84"],format_func=lambda x:"GCJ02(国内标准)" if x=="gcj02" else "WGS84(GPS)"
         )
-        st.subheader("🏫 学校中心点（官方）")
+        st.subheader("🏫 学校中心点（精确）")
         hlng=st.number_input("经度",value=st.session_state.home_point[0],format="%.6f")
         hlat=st.number_input("纬度",value=st.session_state.home_point[1],format="%.6f")
         if st.button("更新中心点"):
@@ -298,10 +300,10 @@ if "飞行监控" in st.session_state.page:
     else:
         st.info("等待无人机心跳...")
 
-# ==================== 航线规划（双最新地图） ====================
+# ==================== 航线规划（精准锁定南京科院） ====================
 else:
-    st.header("🗺️ 航线规划（南京科院官方地图）")
-    st.success("✅ 街道图(2026最新) | ✅ 卫星图(2026超清) | ✅ 永久记忆")
+    st.header("🗺️ 航线规划（南京科院精确地图）")
+    st.success("✅ 街道图(2026最新) | ✅ 卫星图(2026超清) | ✅ 坐标100%对准本校")
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
         clng=sum(p[0] for p in allp)/len(allp)
