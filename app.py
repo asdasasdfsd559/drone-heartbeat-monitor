@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import time
+import threading
 import json
 import os
 from datetime import datetime, timezone, timedelta
@@ -10,9 +11,68 @@ from streamlit_folium import st_folium
 
 st.set_page_config(page_title="南京科技职业学院无人机地面站", layout="wide")
 
+# ==================== 【新增】心跳控制状态 ====================
+if "heartbeat_paused" not in st.session_state:
+    st.session_state.heartbeat_paused = False
+
 # ==================== 北京时间 ====================
-def beijing_time():
-    return datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
+BEIJING_TZ = timezone(timedelta(hours=8))
+def get_beijing_time():
+    return datetime.now(BEIJING_TZ)
+def get_beijing_time_ms():
+    return get_beijing_time().strftime("%H:%M:%S.%f")[:-3]
+
+# ==================== 心跳线程（支持暂停） ====================
+class HeartbeatManager:
+    def __init__(self):
+        self.heartbeats = []
+        self.sequence = 0
+        self.last_time = get_beijing_time()
+        self.running = False
+        self.thread = None
+        self.lock = threading.Lock()
+    def start(self):
+        if self.running: return
+        self.running = True
+        self.thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self.thread.start()
+    def stop(self):
+        self.running = False
+        if self.thread: self.thread.join(timeout=2)
+    def _heartbeat_loop(self):
+        while self.running:
+            # ==================== 【新增】暂停判断 ====================
+            if st.session_state.heartbeat_paused:
+                time.sleep(0.2)
+                continue
+
+            s = time.time()
+            with self.lock:
+                self.sequence +=1
+                now=get_beijing_time()
+                self.heartbeats.append({
+                    'time':now.strftime("%H:%M:%S"),
+                    'time_ms':now.strftime("%H:%M:%S.%f")[:-3],
+                    'seq':self.sequence,
+                    'timestamp':now.timestamp()
+                })
+                if len(self.heartbeats)>100:
+                    self.heartbeats.pop(0)
+                self.last_time=now
+            elapsed=time.time()-s
+            time.sleep(max(0,1-elapsed))
+    def get_data(self):
+        with self.lock:
+            return self.heartbeats.copy(), self.sequence, self.last_time
+    def get_connection_status(self):
+        with self.lock:
+            if not self.heartbeats:
+                return "等待",0
+            last=self.heartbeats[-1]
+            now=get_beijing_time()
+            last_dt=datetime.fromtimestamp(last['timestamp'],tz=BEIJING_TZ)
+            ts=(now-last_dt).total_seconds()
+            return ("在线",ts) if ts<3 else ("超时",ts)
 
 # ==================== 坐标转换 ====================
 class CoordTransform:
@@ -21,7 +81,7 @@ class CoordTransform:
         return lng+0.0005, lat+0.0003
     @staticmethod
     def gcj02_to_wgs84(lng,lat):
-        return lng-0.0005, lat-0.0005
+        return lng-0.0005, lat-0.0003
 
 # ==================== 地图 ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
@@ -100,6 +160,10 @@ def load_state():
     return None
 
 # ==================== 初始化 ====================
+if 'heartbeat_mgr' not in st.session_state:
+    st.session_state.heartbeat_mgr=HeartbeatManager()
+    st.session_state.heartbeat_mgr.start()
+
 if 'page' not in st.session_state:
     st.session_state.page="飞行监控"
 
@@ -131,8 +195,25 @@ with st.sidebar:
     st.markdown("**南京科技职业学院**")
     st.caption("📍 葛关路625号 | 欣乐路188号")
 
+    # ==================== 【新增】心跳暂停按钮 ====================
+    if st.button("⏸️ 暂停心跳" if not st.session_state.heartbeat_paused else "▶️ 启动心跳"):
+        st.session_state.heartbeat_paused = not st.session_state.heartbeat_paused
+        st.rerun()
+
     page=st.radio("功能",["📡 飞行监控","🗺️ 航线规划"])
     st.session_state.page=page
+    
+    status,ts=st.session_state.heartbeat_mgr.get_connection_status()
+    _,seq,_=st.session_state.heartbeat_mgr.get_data()
+
+    if st.session_state.heartbeat_paused:
+        st.warning("⏸️ 心跳已暂停")
+    elif status=="在线":
+        st.success(f"✅ 在线 ({ts:.1f}s)")
+    else:
+        st.error(f"❌ 超时 ({ts:.1f}s)")
+
+    st.metric("心跳序列号",seq)
 
     if "🗺️ 航线规划" in page:
         st.session_state.coord_system=st.selectbox(
@@ -202,54 +283,37 @@ with st.sidebar:
 # ==================== 飞行监控 ====================
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控（南京科院）")
+    hb_list,seq,_=st.session_state.heartbeat_mgr.get_data()
+    if hb_list:
+        df=pd.DataFrame(hb_list)
+        col1,col2,col3,col4=st.columns(4)
+        col1.metric("总心跳",len(df))
+        col2.metric("序列号",seq)
+        col3.metric("连接","⏸️ 已暂停" if st.session_state.heartbeat_paused else "✅ 在线" if status=="在线" else "❌ 离线")
+        col4.metric("丢包率",f"{(seq-len(df))/seq*100:.1f}%" if seq>0 else "0%")
 
-    # ==================== 你朋友给的【正确】心跳代码（已完整替换） ====================
-    # ==================== 心跳监控 核心逻辑（稳定版） ====================
-    if "heartbeat_data" not in st.session_state:
-        st.session_state.heartbeat_data = []
-        st.session_state.seq = 0
-        st.session_state.running = False
+        if len(hb_list)>=2:
+            intervals=[hb_list[i]['timestamp']-hb_list[i-1]['timestamp'] for i in range(1,len(hb_list))]
+            seqs=[x['seq'] for x in hb_list[1:]]
+            fig_int=go.Figure()
+            fig_int.add_trace(go.Scatter(x=seqs,y=intervals,mode='lines+markers',name='间隔',line=dict(color='orange')))
+            fig_int.add_hline(y=1,line_dash='dash',line_color='green',annotation_text='标准1秒')
+            fig_int.update_layout(title='心跳间隔（秒）',xaxis_title='序号',yaxis_title='秒',height=300)
+            st.plotly_chart(fig_int,use_container_width=True)
 
-    # 按钮
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("▶️ 开始心跳监测", use_container_width=True):
-            st.session_state.running = True
-    with c2:
-        if st.button("⏸️ 暂停心跳监测", use_container_width=True):
-            st.session_state.running = False
+        fig_seq=go.Figure()
+        fig_seq.add_trace(go.Scatter(x=df['time'],y=df['seq'],mode='lines+markers',name='心跳序列',line=dict(color='blue')))
+        fig_seq.update_layout(title='心跳趋势',xaxis_title='时间',yaxis_title='序号',height=300)
+        st.plotly_chart(fig_seq,use_container_width=True)
+        st.subheader("最近心跳数据")
+        st.dataframe(df[['time_ms','seq']].tail(15),use_container_width=True)
+    else:
+        st.info("等待无人机心跳...")
 
-    # 自动刷新 + 实时显示
-    placeholder = st.empty()
-
-    # 核心运行逻辑（不会卡死）
-    if st.session_state.running:
-        st.session_state.seq += 1
-        t = beijing_time()
-        st.session_state.heartbeat_data.append({
-            "序号": st.session_state.seq,
-            "时间": t,
-            "状态": "在线正常"
-        })
-        # 限制最大数量，防止卡顿
-        if len(st.session_state.heartbeat_data) > 60:
-            st.session_state.heartbeat_data.pop(0)
-
-    # 显示图表 + 表格
-    with placeholder.container():
-        df = pd.DataFrame(st.session_state.heartbeat_data)
-        if not df.empty:
-            st.line_chart(df, x="时间", y="序号", color="#ff4560")
-            st.dataframe(df, use_container_width=True, height=200)
-
-    # 自发自收自动循环（GitHub 100%生效）
-    if st.session_state.running:
-        time.sleep(1)
-        st.rerun()
-
-# ==================== 航线规划（无闪烁） ====================
+# ==================== 航线规划 —— 【修复地图闪烁】 ====================
 else:
     st.header("🗺️ 航线规划（南京科院精确地图）")
+    st.success("✅ 街道图(2026最新) | ✅ 卫星图(2026超清) | ✅ 无闪烁圈选")
 
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
@@ -258,7 +322,7 @@ else:
     else:
         clng,clat=st.session_state.home_point
 
-    # 固定地图容器，不重复重载
+    # ==================== 【修复】固定地图容器，不重复重载 ====================
     map_container = st.empty()
     with map_container:
         m = create_map(
@@ -269,7 +333,7 @@ else:
             st.session_state.coord_system,
             st.session_state.draw_points
         )
-        # 固定key，不重建地图
+        # 【关键】固定 key，让 Streamlit 不重建地图
         o = st_folium(m, width=1100, height=650, key="MAP_FIXED_KEY")
 
     # 打点
@@ -281,3 +345,8 @@ else:
             st.session_state.last_click = pt
             st.session_state.draw_points.append(pt)
             save_state()
+
+# 自动刷新（只在监控页面刷新，不影响地图）
+if "飞行监控" in st.session_state.page and not st.session_state.heartbeat_paused:
+    time.sleep(0.5)
+    st.rerun()
