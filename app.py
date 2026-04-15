@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import datetime
 import json
 import os
 import folium
 from streamlit_folium import st_folium
+import time
 
 st.set_page_config(page_title="南京科技职业学院无人机地面站", layout="wide")
 
@@ -16,7 +16,7 @@ class CoordTransform:
         return lng+0.0005, lat+0.0003
     @staticmethod
     def gcj02_to_wgs84(lng,lat):
-        return lng-0.0005, lat-0.0003
+        return lng-0.0005, lat-0.0005
 
 # ==================== 地图 ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
@@ -28,12 +28,12 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
     )
 
     folium.TileLayer(
-        tiles='https://wprd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x={x}&y={y}&z={z}',
+        tiles='https://wprd01.is.autonym.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x={x}&y={y}&z={z}',
         attr='高德-2026最新街道', name='街道图(2026)'
     ).add_to(m)
 
     folium.TileLayer(
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/z/{y}/{x}',
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         attr='Esri-2026高清卫星', name='卫星图(超清)'
     ).add_to(m)
 
@@ -72,7 +72,7 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 保存 ====================
+# ==================== 永久保存 ====================
 STATE_FILE = "ground_station_state.json"
 
 def save_state():
@@ -128,6 +128,9 @@ with st.sidebar:
 
     page=st.radio("功能",["📡 飞行监控","🗺️ 航线规划"])
     st.session_state.page=page
+    
+    st.success(f"✅ 在线")
+    st.metric("状态","自发自收运行中")
 
     if "🗺️ 航线规划" in page:
         st.session_state.coord_system=st.selectbox(
@@ -194,53 +197,58 @@ with st.sidebar:
             save_state()
             st.rerun()
 
-# ==================== 【你正确的心跳逻辑】 ====================
+# ==================== 心跳监控（已修复无限加载） ====================
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控（自发自收 · 永不超时）")
+    st.header("📡 飞行监控（自发自收 · 直线图）")
 
-    # ==================== 心跳监控 核心逻辑（稳定版） ====================
+    # 初始化
     if "heartbeat_data" not in st.session_state:
         st.session_state.heartbeat_data = []
         st.session_state.seq = 0
         st.session_state.running = True
 
-    # 按钮
+    # 控制按钮
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("▶️ 开始心跳监测", use_container_width=True):
+        if st.button("▶️ 开始心跳", use_container_width=True):
             st.session_state.running = True
     with c2:
-        if st.button("⏸️ 暂停心跳监测", use_container_width=True):
+        if st.button("⏸️ 暂停心跳", use_container_width=True):
             st.session_state.running = False
 
-    # 自动刷新 + 实时显示
     placeholder = st.empty()
 
-    # 核心运行逻辑（不会卡死）
+    # 正常时间 + 序号自增
     if st.session_state.running:
         st.session_state.seq += 1
-        t = datetime.datetime.now().strftime("%H:%M:%S")
+        now = datetime.datetime.now()
+        t = now.strftime("%H:%M:%S")
+        
         st.session_state.heartbeat_data.append({
-            "序号": st.session_state.seq,
+            "index": len(st.session_state.heartbeat_data) + 1,
             "时间": t,
-            "状态": "在线正常"
+            "序号": st.session_state.seq,
+            "状态": "在线"
         })
         if len(st.session_state.heartbeat_data) > 50:
             st.session_state.heartbeat_data.pop(0)
+        
+        time.sleep(1)
 
-    # 显示图表 + 表格
+    # 绘图 + 表格
     with placeholder.container():
         df = pd.DataFrame(st.session_state.heartbeat_data)
         if not df.empty:
-            st.line_chart(df, x="时间", y="序号", color="#ff4560")
-            st.dataframe(df, use_container_width=True, height=200)
+            st.subheader("心跳序号趋势（直线）")
+            st.line_chart(df, x="index", y="序号", color="#00a8ff")
 
-    # 自动刷新（无卡顿）
-    st.rerun()
+            st.subheader("心跳数据")
+            show_df = df[["时间", "序号", "状态"]]
+            st.dataframe(show_df, use_container_width=True, height=250)
 
 # ==================== 航线规划 ====================
 else:
-    st.header("🗺️ 航线规划")
+    st.header("🗺️ 航线规划（南京科院精确地图）")
 
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
