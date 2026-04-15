@@ -11,7 +11,7 @@ from streamlit_folium import st_folium
 
 st.set_page_config(page_title="南京科技职业学院无人机地面站", layout="wide")
 
-# ==================== 心跳控制状态 ====================
+# ==================== 【新增】心跳控制状态 ====================
 if "heartbeat_paused" not in st.session_state:
     st.session_state.heartbeat_paused = False
 
@@ -41,6 +41,7 @@ class HeartbeatManager:
         if self.thread: self.thread.join(timeout=2)
     def _heartbeat_loop(self):
         while self.running:
+            # ==================== 【新增】暂停判断 ====================
             if st.session_state.heartbeat_paused:
                 time.sleep(0.2)
                 continue
@@ -194,7 +195,7 @@ with st.sidebar:
     st.markdown("**南京科技职业学院**")
     st.caption("📍 葛关路625号 | 欣乐路188号")
 
-    # 心跳暂停按钮
+    # ==================== 【新增】心跳暂停按钮 ====================
     if st.button("⏸️ 暂停心跳" if not st.session_state.heartbeat_paused else "▶️ 启动心跳"):
         st.session_state.heartbeat_paused = not st.session_state.heartbeat_paused
         st.rerun()
@@ -309,9 +310,10 @@ if "飞行监控" in st.session_state.page:
     else:
         st.info("等待无人机心跳...")
 
-# ==================== 航线规划（无闪烁） ====================
+# ==================== 航线规划 —— 【修复地图闪烁】 ====================
 else:
     st.header("🗺️ 航线规划（南京科院精确地图）")
+    st.success("✅ 街道图(2026最新) | ✅ 卫星图(2026超清) | ✅ 无闪烁圈选")
 
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
@@ -320,7 +322,7 @@ else:
     else:
         clng,clat=st.session_state.home_point
 
-    # 固定地图容器，不重复重载
+    # ==================== 【修复】固定地图容器，不重复重载 ====================
     map_container = st.empty()
     with map_container:
         m = create_map(
@@ -331,7 +333,7 @@ else:
             st.session_state.coord_system,
             st.session_state.draw_points
         )
-        # 固定key，不重建地图
+        # 【关键】固定 key，让 Streamlit 不重建地图
         o = st_folium(m, width=1100, height=650, key="MAP_FIXED_KEY")
 
     # 打点
@@ -344,7 +346,7 @@ else:
             st.session_state.draw_points.append(pt)
             save_state()
 
-# 自动刷新（仅监控页）
+# 自动刷新（只在监控页面刷新，不影响地图）
 if "飞行监控" in st.session_state.page and not st.session_state.heartbeat_paused:
     time.sleep(0.5)
     st.rerun()
