@@ -338,10 +338,13 @@ else:
     if o and o.get("last_clicked"):
         lat = o["last_clicked"]["lat"]
         lng = o["last_clicked"]["lng"]
-        pt = (round(lng,6), round(lng,6))
+        pt = (round(lng,6), round(lat,6))
         if pt != st.session_state.last_click:
             st.session_state.last_click = pt
             st.session_state.draw_points.append(pt)
             save_state()
 
-# 【已删除】无限刷新导致卡死的代码！
+# 自动刷新（仅监控页）
+if "飞行监控" in st.session_state.page and not st.session_state.heartbeat_paused:
+    time.sleep(0.5)
+    st.rerun()
