@@ -152,10 +152,9 @@ with st.sidebar:
 
 # ==================== 飞行监控 ====================
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控（北京时间）")
+    st.header("📡 飞行监控（自发自收）")
 
-    # ==================== 你提供的 正确代码 100% 原样保留 ====================
-    # ==================== 心跳监控 核心逻辑（稳定版） ====================
+    # ==================== 心跳监控 核心逻辑（稳定自发自收） ====================
     if "heartbeat_data" not in st.session_state:
         st.session_state.heartbeat_data = []
         st.session_state.seq = 0
@@ -164,31 +163,33 @@ if "飞行监控" in st.session_state.page:
     # 按钮
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("▶️ 开始心跳监测", use_container_width=True):
+        if st.button("▶️ 开始自发自收", use_container_width=True):
             st.session_state.running = True
     with c2:
-        if st.button("⏸️ 暂停心跳监测", use_container_width=True):
+        if st.button("⏸️ 暂停", use_container_width=True):
             st.session_state.running = False
 
-    # 自动刷新 + 实时显示
     placeholder = st.empty()
 
-    # 核心运行逻辑（不会卡死）
+    # 自发自收：自己发、自己收
     if st.session_state.running:
         st.session_state.seq += 1
         t = datetime.datetime.now().strftime("%H:%M:%S")
         st.session_state.heartbeat_data.append({
             "序号": st.session_state.seq,
             "时间": t,
-            "状态": "在线正常"
+            "状态": "自发自收正常"
         })
+        # 最多保留60条
+        if len(st.session_state.heartbeat_data) > 60:
+            st.session_state.heartbeat_data.pop(0)
 
     # 显示图表 + 表格
     with placeholder.container():
         df = pd.DataFrame(st.session_state.heartbeat_data)
         if not df.empty:
             st.line_chart(df, x="时间", y="序号", color="#ff4560")
-            st.dataframe(df, use_container_width=True, height=200)
+            st.dataframe(df, use_container_width=True, height=250)
 
 # ==================== 航线规划 ====================
 else:
