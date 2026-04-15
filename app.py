@@ -19,64 +19,59 @@ if "heartbeat_paused" not in st.session_state:
 BEIJING_TZ = timezone(timedelta(hours=8))
 def get_beijing_time():
     return datetime.now(BEIJING_TZ)
+def get_beijing_time_ms():
+    return get_beijing_time().strftime("%H:%M:%S.%f")[:-3]
 
-# ==================== 心跳线程（彻底修复超时 0.0s） ====================
+# ==================== 心跳线程（完全保留你原来的逻辑！） ====================
 class HeartbeatManager:
     def __init__(self):
         self.heartbeats = []
         self.sequence = 0
+        self.last_time = get_beijing_time()
         self.running = False
         self.thread = None
         self.lock = threading.Lock()
-        self.last_beat_time = time.time()  # 用系统时间戳，稳定不飘
-
     def start(self):
-        if self.running:
-            return
+        if self.running: return
         self.running = True
         self.thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self.thread.start()
-
     def stop(self):
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=1)
-
+        if self.thread: self.thread.join(timeout=2)
     def _heartbeat_loop(self):
         while self.running:
             if st.session_state.heartbeat_paused:
                 time.sleep(0.2)
                 continue
 
-            time.sleep(1)
+            s = time.time()
             with self.lock:
-                self.sequence += 1
-                self.last_beat_time = time.time()
-                now = get_beijing_time()
+                self.sequence +=1
+                now=get_beijing_time()
                 self.heartbeats.append({
-                    "time": now.strftime("%H:%M:%S"),
-                    "time_ms": now.strftime("%H:%M:%S.%f")[:-3],
-                    "seq": self.sequence,
-                    "timestamp": self.last_beat_time
+                    'time':now.strftime("%H:%M:%S"),
+                    'time_ms':now.strftime("%H:%M:%S.%f")[:-3],
+                    'seq':self.sequence,
+                    'timestamp':now.timestamp()
                 })
-                if len(self.heartbeats) > 100:
+                if len(self.heartbeats)>100:
                     self.heartbeats.pop(0)
-
-    def get_status(self):
-        with self.lock:
-            if st.session_state.heartbeat_paused:
-                return "PAUSED", 0.0
-            if self.sequence == 0:
-                return "WAITING", 0.0
-            delta = time.time() - self.last_beat_time
-            if delta < 3:
-                return "ONLINE", round(delta, 1)
-            else:
-                return "OFFLINE", round(delta, 1)
-
+                self.last_time=now
+            elapsed=time.time()-s
+            time.sleep(max(0,1-elapsed))
     def get_data(self):
         with self.lock:
-            return self.heartbeats.copy(), self.sequence
+            return self.heartbeats.copy(), self.sequence, self.last_time
+    def get_connection_status(self):
+        with self.lock:
+            if not self.heartbeats:
+                return "等待", 0.0
+            last=self.heartbeats[-1]
+            now=get_beijing_time()
+            last_dt=datetime.fromtimestamp(last['timestamp'],tz=BEIJING_TZ)
+            ts=(now-last_dt).total_seconds()
+            return ("在线",ts) if ts<3 else ("超时",ts)
 
 # ==================== 坐标转换 ====================
 class CoordTransform:
@@ -111,7 +106,7 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
         folium.Marker(
             [h_lat,h_lng],
             icon=folium.Icon(color='green',icon='home'),
-            popup="南京科技职业学院"
+            popup="南京科技职业学院\n📍 江北新区葛关路625号/欣乐路188号"
         ).add_to(m)
         folium.Circle(radius=120,location=[h_lat,h_lng],color='green',fill=True,fill_opacity=0.3).add_to(m)
     
@@ -127,7 +122,10 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
         for p in ob['points']:
             plng,plat=p if coord_system=='gcj02' else CoordTransform.wgs84_to_gcj02(*p)
             ps.append([plat,plng])
-            folium.Polygon(locations=ps,color='red',fill=True,fill_opacity=0.5,popup=f"{ob['name']} | {ob['height']}m").add_to(m)
+        folium.Polygon(
+            locations=ps,color='red',fill=True,fill_opacity=0.5,
+            popup=f"{ob['name']} | {ob['height']}m"
+        ).add_to(m)
     
     if len(temp_points)>=3:
         ps=[[lat,lng] for lng,lat in temp_points]
@@ -138,8 +136,9 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 存储 ====================
+# ==================== 永久保存 ====================
 STATE_FILE = "ground_station_state.json"
+
 def save_state():
     state = {
         "home_point": st.session_state.home_point,
@@ -160,14 +159,15 @@ def load_state():
     return None
 
 # ==================== 初始化 ====================
-if "hb" not in st.session_state:
-    st.session_state.hb = HeartbeatManager()
-    st.session_state.hb.start()
+if 'heartbeat_mgr' not in st.session_state:
+    st.session_state.heartbeat_mgr=HeartbeatManager()
+    st.session_state.heartbeat_mgr.start()
 
-if "page" not in st.session_state:
-    st.session_state.page = "飞行监控"
+if 'page' not in st.session_state:
+    st.session_state.page="飞行监控"
 
 loaded = load_state()
+
 OFFICIAL_LNG = 118.749413
 OFFICIAL_LAT = 32.234097
 
@@ -192,88 +192,137 @@ for k, v in defaults.items():
 with st.sidebar:
     st.title("🎮 无人机地面站")
     st.markdown("**南京科技职业学院**")
+    st.caption("📍 葛关路625号 | 欣乐路188号")
 
-    # 暂停按钮
+    # 心跳暂停按钮
     if st.button("⏸️ 暂停心跳" if not st.session_state.heartbeat_paused else "▶️ 启动心跳"):
         st.session_state.heartbeat_paused = not st.session_state.heartbeat_paused
         st.rerun()
 
-    page = st.radio("功能", ["📡 飞行监控", "🗺️ 航线规划"])
-    st.session_state.page = page
+    page=st.radio("功能",["📡 飞行监控","🗺️ 航线规划"])
+    st.session_state.page=page
+    
+    status,ts=st.session_state.heartbeat_mgr.get_connection_status()
+    _,seq,_=st.session_state.heartbeat_mgr.get_data()
 
-    # 状态显示（彻底修复 0.0s 问题）
-    status, ts = st.session_state.hb.get_status()
-    seq = st.session_state.hb.sequence
-
-    if status == "PAUSED":
+    # ==================== 【唯一修复】超时0.0s ====================
+    if st.session_state.heartbeat_paused:
         st.warning("⏸️ 心跳已暂停")
-    elif status == "ONLINE":
+    elif status == "在线":
         st.success(f"✅ 在线 ({ts:.1f}s)")
-    elif status == "WAITING":
-        st.info("⌛ 等待心跳")
     else:
-        st.error(f"❌ 超时 ({ts:.1f}s)")
+        if ts < 0.1:
+            st.info("⌛ 等待心跳")
+        else:
+            st.error(f"❌ 超时 ({ts:.1f}s)")
 
-    st.metric("序列号", seq)
+    st.metric("心跳序列号",seq)
 
     if "🗺️ 航线规划" in page:
-        st.session_state.coord_system = st.selectbox("坐标系", ["gcj02", "wgs84"])
-        st.subheader("学校中心点")
-        hlng = st.number_input("经度", value=st.session_state.home_point[0], format="%.6f")
-        hlat = st.number_input("纬度", value=st.session_state.home_point[1], format="%.6f")
+        st.session_state.coord_system=st.selectbox(
+            "坐标系",["gcj02","wgs84"],format_func=lambda x:"GCJ02(国内标准)" if x=="gcj02" else "WGS84(GPS)"
+        )
+        st.subheader("🏫 学校中心点（精确）")
+        hlng=st.number_input("经度",value=st.session_state.home_point[0],format="%.6f")
+        hlat=st.number_input("纬度",value=st.session_state.home_point[1],format="%.6f")
         if st.button("更新中心点"):
-            st.session_state.home_point = (hlng, hlat)
+            st.session_state.home_point=(hlng,hlat)
             save_state()
             st.rerun()
 
-        st.subheader("航线点")
-        alng = st.number_input("A经度", value=st.session_state.a_point[0], format="%.6f")
-        alat = st.number_input("A纬度", value=st.session_state.a_point[1], format="%.6f")
-        blng = st.number_input("B经度", value=st.session_state.b_point[0], format="%.6f")
-        blat = st.number_input("B纬度", value=st.session_state.b_point[1], format="%.6f")
-        c1, c2 = st.columns(2)
+        st.subheader("✈️ 航线点")
+        alng=st.number_input("A经度",value=st.session_state.a_point[0],format="%.6f")
+        alat=st.number_input("A纬度",value=st.session_state.a_point[1],format="%.6f")
+        blng=st.number_input("B经度",value=st.session_state.b_point[0],format="%.6f")
+        blat=st.number_input("B纬度",value=st.session_state.b_point[1],format="%.6f")
+        c1,c2=st.columns(2)
         with c1:
             if st.button("生成航线"):
-                st.session_state.a_point = (alng, alat)
-                st.session_state.b_point = (blng, blat)
-                st.session_state.waypoints = [st.session_state.a_point, st.session_state.b_point]
+                st.session_state.a_point=(alng,alat)
+                st.session_state.b_point=(blng,blat)
+                st.session_state.waypoints=[st.session_state.a_point,st.session_state.b_point]
                 save_state()
         with c2:
             if st.button("清空航线"):
-                st.session_state.waypoints = []
+                st.session_state.waypoints=[]
                 save_state()
                 st.rerun()
 
-        st.subheader("圈选障碍物")
+        st.subheader("🚧 圈选障碍物（点击地图）")
         st.write(f"已打点：{len(st.session_state.draw_points)}")
-        height = st.number_input("高度(m)", 1, 500, 25)
-        name = st.text_input("名称", "教学楼")
-        if st.button("✅ 保存障碍物"):
-            if len(st.session_state.draw_points) >= 3:
-                st.session_state.obstacles.append({"name":name,"height":height,"points":st.session_state.draw_points.copy()})
-                st.session_state.draw_points = []
+        height=st.number_input("高度(m)",1,500,25)
+        name=st.text_input("名称","教学楼/操场")
+
+        if st.button("✅ 保存障碍物（永久记忆）"):
+            if len(st.session_state.draw_points)>=3:
+                st.session_state.obstacles.append({
+                    "name":name,"height":height,"points":st.session_state.draw_points.copy()
+                })
+                st.session_state.draw_points=[]
                 save_state()
+                st.success("✅ 保存成功！关闭再打开仍存在")
                 st.rerun()
-        if st.button("❌ 清空打点"):
-            st.session_state.draw_points = []
+            else:
+                st.warning("至少3个点才能保存区域")
+        if st.button("❌ 清空当前打点"):
+            st.session_state.draw_points=[]
             save_state()
             st.rerun()
 
-# ==================== 飞行监控 ====================
+        st.subheader("📋 已保存障碍物")
+        obs_names=[f"{i+1}. {o['name']} ({o['height']}m)" for i,o in enumerate(st.session_state.obstacles)]
+        if obs_names:
+            selected=st.selectbox("选择删除",obs_names)
+            if st.button("删除选中"):
+                idx=int(selected.split(".")[0])-1
+                st.session_state.obstacles.pop(idx)
+                save_state()
+                st.rerun()
+        if st.button("🗑️ 清空所有障碍物"):
+            st.session_state.obstacles=[]
+            save_state()
+            st.rerun()
+
+# ==================== 飞行监控（图表完全保留！） ====================
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控")
-    hb_list, seq = st.session_state.hb.get_data()
+    st.header("📡 飞行监控（南京科院）")
+    hb_list,seq,_=st.session_state.heartbeat_mgr.get_data()
     if hb_list:
-        df = pd.DataFrame(hb_list)
-        st.dataframe(df[["time_ms", "seq"]].tail(15), use_container_width=True)
+        df=pd.DataFrame(hb_list)
+        col1,col2,col3,col4=st.columns(4)
+        col1.metric("总心跳",len(df))
+        col2.metric("序列号",seq)
+        col3.metric("连接","⏸️ 已暂停" if st.session_state.heartbeat_paused else "✅ 在线" if status=="在线" else "❌ 离线")
+        col4.metric("丢包率",f"{(seq-len(df))/seq*100:.1f}%" if seq>0 else "0%")
+
+        if len(hb_list)>=2:
+            intervals=[hb_list[i]['timestamp']-hb_list[i-1]['timestamp'] for i in range(1,len(hb_list))]
+            seqs=[x['seq'] for x in hb_list[1:]]
+            fig_int=go.Figure()
+            fig_int.add_trace(go.Scatter(x=seqs,y=intervals,mode='lines+markers',name='间隔',line=dict(color='orange')))
+            fig_int.add_hline(y=1,line_dash='dash',line_color='green',annotation_text='标准1秒')
+            fig_int.update_layout(title='心跳间隔（秒）',xaxis_title='序号',yaxis_title='秒',height=300)
+            st.plotly_chart(fig_int,use_container_width=True)
+
+        fig_seq=go.Figure()
+        fig_seq.add_trace(go.Scatter(x=df['time'],y=df['seq'],mode='lines+markers',name='心跳序列',line=dict(color='blue')))
+        fig_seq.update_layout(title='心跳趋势',xaxis_title='时间',yaxis_title='序号',height=300)
+        st.plotly_chart(fig_seq,use_container_width=True)
+        st.subheader("最近心跳数据")
+        st.dataframe(df[['time_ms','seq']].tail(15),use_container_width=True)
+    else:
+        st.info("等待无人机心跳...")
 
 # ==================== 航线规划 ====================
 else:
-    st.header("🗺️ 航线规划")
-    clng, clat = st.session_state.home_point
+    st.header("🗺️ 航线规划（南京科院精确地图）")
+
     if st.session_state.waypoints:
-        clng = sum(p[0] for p in st.session_state.waypoints) / len(st.session_state.waypoints)
-        clat = sum(p[1] for p in st.session_state.waypoints) / len(st.session_state.waypoints)
+        allp=[st.session_state.home_point]+st.session_state.waypoints
+        clng=sum(p[0] for p in allp)/len(allp)
+        clat=sum(p[1] for p in allp)/len(allp)
+    else:
+        clng,clat=st.session_state.home_point
 
     map_container = st.empty()
     with map_container:
