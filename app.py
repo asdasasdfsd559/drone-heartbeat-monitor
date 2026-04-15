@@ -196,48 +196,56 @@ with st.sidebar:
             save_state()
             st.rerun()
 
-# ==================== 【你给的 100% 正确心跳逻辑 直接使用】 ====================
+# ==================== 心跳监控（直线图 + 时间正常） ====================
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控（自发自收 · 永不超时）")
+    st.header("📡 飞行监控（自发自收 · 直线图）")
 
-    # ==================== 心跳监控 核心逻辑（你给的正确版） ====================
+    # 初始化
     if "heartbeat_data" not in st.session_state:
         st.session_state.heartbeat_data = []
         st.session_state.seq = 0
         st.session_state.running = True
 
-    # 按钮
+    # 控制按钮
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("▶️ 开始心跳监测", use_container_width=True):
+        if st.button("▶️ 开始心跳", use_container_width=True):
             st.session_state.running = True
     with c2:
-        if st.button("⏸️ 暂停心跳监测", use_container_width=True):
+        if st.button("⏸️ 暂停心跳", use_container_width=True):
             st.session_state.running = False
 
-    # 自动刷新 + 实时显示
     placeholder = st.empty()
 
-    # 核心运行逻辑（不会卡死）
+    # 正常时间 + 序号自增
     if st.session_state.running:
         st.session_state.seq += 1
-        t = datetime.datetime.now().strftime("%H:%M:%S")
+        now = datetime.datetime.now()
+        t = now.strftime("%H:%M:%S")
+        
         st.session_state.heartbeat_data.append({
-            "序号": st.session_state.seq,
+            "index": len(st.session_state.heartbeat_data) + 1,
             "时间": t,
-            "状态": "在线正常"
+            "序号": st.session_state.seq,
+            "状态": "在线"
         })
+        # 最多保留50条
         if len(st.session_state.heartbeat_data) > 50:
             st.session_state.heartbeat_data.pop(0)
 
-    # 显示图表 + 表格
+    # 绘图 + 表格
     with placeholder.container():
         df = pd.DataFrame(st.session_state.heartbeat_data)
         if not df.empty:
-            st.line_chart(df, x="时间", y="序号", color="#ff4560")
-            st.dataframe(df, use_container_width=True, height=200)
+            # 直线图：用 index 做 X 轴，绝对笔直
+            st.subheader("心跳序号趋势（直线）")
+            st.line_chart(df, x="index", y="序号", color="#00a8ff")
 
-    # 自动刷新（无卡顿、无sleep）
+            st.subheader("心跳数据")
+            show_df = df[["时间", "序号", "状态"]]
+            st.dataframe(show_df, use_container_width=True, height=250)
+
+    # 自动刷新
     st.rerun()
 
 # ==================== 航线规划 ====================
