@@ -146,7 +146,7 @@ def create_map(center_lng, center_lat, waypoints, home_point, obstacles, coord_s
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 初始化 ====================
+# ==================== 初始化 + 持久化记忆 ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr = HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -154,6 +154,7 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "飞行监控"
 
+# ========== 持久化记忆：所有数据都会保存 ==========
 if 'home_point' not in st.session_state:
     st.session_state.home_point = (118.749413, 32.234097)
 
@@ -168,10 +169,11 @@ if 'b_point' not in st.session_state:
 if 'coord_system' not in st.session_state:
     st.session_state.coord_system = 'wgs84'
 
+# ========== 障碍物记忆（永久保存） ==========
 if 'obstacles' not in st.session_state:
     st.session_state.obstacles = []
 
-# 圈选点（手动点击）
+# ========== 绘制中点记忆 ==========
 if 'draw_points' not in st.session_state:
     st.session_state.draw_points = []
 
@@ -236,7 +238,7 @@ with st.sidebar:
                     "points": st.session_state.draw_points.copy()
                 })
                 st.session_state.draw_points = []
-                st.success("保存成功")
+                st.success("保存成功 ✅ 已记忆")
                 st.rerun()
             else:
                 st.warning("至少需要3个点")
@@ -245,11 +247,21 @@ with st.sidebar:
             st.session_state.draw_points = []
             st.rerun()
         
+        # 删除障碍物
         st.subheader("已保存障碍物")
-        for i, ob in enumerate(st.session_state.obstacles):
-            st.write(f"{i+1}. {ob['name']} | {ob['height']}m")
+        obs_names = [f"{i+1}. {o['name']} ({o['height']}m)" for i, o in enumerate(st.session_state.obstacles)]
+        if obs_names:
+            selected = st.selectbox("选择要删除的障碍物", obs_names)
+            if st.button("删除选中"):
+                idx = int(selected.split(".")[0]) - 1
+                st.session_state.obstacles.pop(idx)
+                st.rerun()
+        
+        if st.button("🗑️ 清空所有障碍物"):
+            st.session_state.obstacles = []
+            st.rerun()
 
-# ==================== 飞行监控（图表已恢复） ====================
+# ==================== 飞行监控（带图表） ====================
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控")
     hb_list, seq, _ = st.session_state.heartbeat_mgr.get_data()
@@ -257,7 +269,6 @@ if "飞行监控" in st.session_state.page:
     if hb_list:
         df = pd.DataFrame(hb_list)
 
-        # 指标卡片
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("总心跳数", len(df))
@@ -270,7 +281,6 @@ if "飞行监控" in st.session_state.page:
             loss = (seq - len(df)) / seq * 100 if seq > 0 else 0
             st.metric("丢包率", f"{loss:.1f}%")
 
-        # 心跳间隔图
         if len(hb_list) >= 2:
             intervals = [hb_list[i]['timestamp'] - hb_list[i-1]['timestamp'] for i in range(1, len(hb_list))]
             seqs = [hb_list[i]['seq'] for i in range(1, len(hb_list))]
@@ -281,22 +291,20 @@ if "飞行监控" in st.session_state.page:
             fig_interval.update_layout(title='心跳间隔精确度', xaxis_title='序列号', yaxis_title='秒', height=300)
             st.plotly_chart(fig_interval, use_container_width=True)
 
-        # 心跳趋势图
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df['time'], y=df['seq'], mode='lines+markers', name='序列号', line=dict(color='blue')))
         fig.update_layout(title='心跳序列号趋势', xaxis_title='时间', yaxis_title='序列号', height=300)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 数据表格
         st.subheader("心跳数据")
         st.dataframe(df[['time_ms', 'seq']].tail(15), use_container_width=True)
     else:
         st.info("等待心跳接入...")
 
-# ==================== 航线规划（点击圈选） ====================
+# ==================== 航线规划（带记忆） ====================
 else:
     st.header("🗺️ 航线规划（点击地图圈选）")
-    st.info("👉 在地图上**点击打点**，至少3个点即可圈出禁飞区")
+    st.success("✅ 所有障碍物、航线都会自动记忆！")
     
     if st.session_state.waypoints:
         allp = [st.session_state.home_point] + st.session_state.waypoints
@@ -316,7 +324,6 @@ else:
     
     o = st_folium(m, width=1000, height=600, key="map")
     
-    # 点击地图添加点
     if o and o.get("last_clicked"):
         lat = o["last_clicked"]["lat"]
         lng = o["last_clicked"]["lng"]
