@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 import datetime
 import json
 import os
@@ -32,7 +33,7 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
     ).add_to(m)
 
     folium.TileLayer(
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/z/{y}/{x}',
         attr='Esri-2026高清卫星', name='卫星图(超清)'
     ).add_to(m)
 
@@ -71,7 +72,7 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 永久保存 ====================
+# ==================== 保存 ====================
 STATE_FILE = "ground_station_state.json"
 
 def save_state():
@@ -127,9 +128,6 @@ with st.sidebar:
 
     page=st.radio("功能",["📡 飞行监控","🗺️ 航线规划"])
     st.session_state.page=page
-    
-    st.success(f"✅ 在线")
-    st.metric("状态","自发自收运行中")
 
     if "🗺️ 航线规划" in page:
         st.session_state.coord_system=st.selectbox(
@@ -196,11 +194,11 @@ with st.sidebar:
             save_state()
             st.rerun()
 
-# ==================== 【你给的 100% 正确心跳逻辑 直接使用】 ====================
+# ==================== 【你正确的心跳逻辑】 ====================
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控（自发自收 · 永不超时）")
 
-    # ==================== 心跳监控 核心逻辑（你给的正确版） ====================
+    # ==================== 心跳监控 核心逻辑（稳定版） ====================
     if "heartbeat_data" not in st.session_state:
         st.session_state.heartbeat_data = []
         st.session_state.seq = 0
@@ -237,12 +235,12 @@ if "飞行监控" in st.session_state.page:
             st.line_chart(df, x="时间", y="序号", color="#ff4560")
             st.dataframe(df, use_container_width=True, height=200)
 
-    # 自动刷新（无卡顿、无sleep）
+    # 自动刷新（无卡顿）
     st.rerun()
 
 # ==================== 航线规划 ====================
 else:
-    st.header("🗺️ 航线规划（南京科院精确地图）")
+    st.header("🗺️ 航线规划")
 
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
