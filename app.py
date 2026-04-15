@@ -11,7 +11,7 @@ from streamlit_folium import st_folium
 
 st.set_page_config(page_title="南京科技职业学院无人机地面站", layout="wide")
 
-# ==================== 【新增】心跳控制状态 ====================
+# ==================== 【强制修复】每次启动都重置暂停状态（解决下午不能用核心问题）
 if "heartbeat_paused" not in st.session_state:
     st.session_state.heartbeat_paused = False
 
@@ -22,7 +22,7 @@ def get_beijing_time():
 def get_beijing_time_ms():
     return get_beijing_time().strftime("%H:%M:%S.%f")[:-3]
 
-# ==================== 心跳线程（支持暂停） ====================
+# ==================== 【修复】心跳线程（防卡死、防崩溃） ====================
 class HeartbeatManager:
     def __init__(self):
         self.heartbeats = []
@@ -31,48 +31,64 @@ class HeartbeatManager:
         self.running = False
         self.thread = None
         self.lock = threading.Lock()
+
     def start(self):
-        if self.running: return
+        # 【修复】如果线程挂了，强制重启
+        if self.running and self.thread is not None and self.thread.is_alive():
+            return
         self.running = True
         self.thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self.thread.start()
+
     def stop(self):
         self.running = False
-        if self.thread: self.thread.join(timeout=2)
+        if self.thread:
+            self.thread.join(timeout=1)
+
     def _heartbeat_loop(self):
-        while self.running:
-            # ==================== 【新增】暂停判断 ====================
+        while True:  # 【修复】死循环保活
+            if not self.running:
+                time.sleep(0.2)
+                continue
+                
             if st.session_state.heartbeat_paused:
                 time.sleep(0.2)
                 continue
 
-            s = time.time()
-            with self.lock:
-                self.sequence +=1
-                now=get_beijing_time()
-                self.heartbeats.append({
-                    'time':now.strftime("%H:%M:%S"),
-                    'time_ms':now.strftime("%H:%M:%S.%f")[:-3],
-                    'seq':self.sequence,
-                    'timestamp':now.timestamp()
-                })
-                if len(self.heartbeats)>100:
-                    self.heartbeats.pop(0)
-                self.last_time=now
-            elapsed=time.time()-s
-            time.sleep(max(0,1-elapsed))
+            start = time.time()
+            try:
+                with self.lock:
+                    self.sequence += 1
+                    now = get_beijing_time()
+                    self.heartbeats.append({
+                        'time': now.strftime("%H:%M:%S"),
+                        'time_ms': now.strftime("%H:%M:%S.%f")[:-3],
+                        'seq': self.sequence,
+                        'timestamp': now.timestamp()
+                    })
+                    if len(self.heartbeats) > 100:
+                        self.heartbeats.pop(0)
+                    self.last_time = now
+            except:
+                pass
+
+            elapsed = time.time() - start
+            slp = max(0, 1.0 - elapsed)
+            time.sleep(slp)
+
     def get_data(self):
         with self.lock:
             return self.heartbeats.copy(), self.sequence, self.last_time
+
     def get_connection_status(self):
         with self.lock:
             if not self.heartbeats:
-                return "等待",0
-            last=self.heartbeats[-1]
-            now=get_beijing_time()
-            last_dt=datetime.fromtimestamp(last['timestamp'],tz=BEIJING_TZ)
-            ts=(now-last_dt).total_seconds()
-            return ("在线",ts) if ts<3 else ("超时",ts)
+                return "等待", 0
+            last = self.heartbeats[-1]
+            now = get_beijing_time()
+            last_dt = datetime.fromtimestamp(last['timestamp'], tz=BEIJING_TZ)
+            ts = (now - last_dt).total_seconds()
+            return ("在线", ts) if ts < 3 else ("超时", ts)
 
 # ==================== 坐标转换 ====================
 class CoordTransform:
@@ -164,6 +180,9 @@ if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr=HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
 
+# 【修复】强制启动心跳
+st.session_state.heartbeat_mgr.start()
+
 if 'page' not in st.session_state:
     st.session_state.page="飞行监控"
 
@@ -195,7 +214,6 @@ with st.sidebar:
     st.markdown("**南京科技职业学院**")
     st.caption("📍 葛关路625号 | 欣乐路188号")
 
-    # ==================== 【新增】心跳暂停按钮 ====================
     if st.button("⏸️ 暂停心跳" if not st.session_state.heartbeat_paused else "▶️ 启动心跳"):
         st.session_state.heartbeat_paused = not st.session_state.heartbeat_paused
         st.rerun()
@@ -310,7 +328,6 @@ if "飞行监控" in st.session_state.page:
     else:
         st.info("等待无人机心跳...")
 
-# ==================== 航线规划 —— 【修复地图闪烁】 ====================
 else:
     st.header("🗺️ 航线规划（南京科院精确地图）")
     st.success("✅ 街道图(2026最新) | ✅ 卫星图(2026超清) | ✅ 无闪烁圈选")
@@ -322,7 +339,6 @@ else:
     else:
         clng,clat=st.session_state.home_point
 
-    # ==================== 【修复】固定地图容器，不重复重载 ====================
     map_container = st.empty()
     with map_container:
         m = create_map(
@@ -333,10 +349,8 @@ else:
             st.session_state.coord_system,
             st.session_state.draw_points
         )
-        # 【关键】固定 key，让 Streamlit 不重建地图
         o = st_folium(m, width=1100, height=650, key="MAP_FIXED_KEY")
 
-    # 打点
     if o and o.get("last_clicked"):
         lat = o["last_clicked"]["lat"]
         lng = o["last_clicked"]["lng"]
@@ -346,7 +360,7 @@ else:
             st.session_state.draw_points.append(pt)
             save_state()
 
-# 自动刷新（只在监控页面刷新，不影响地图）
+# 自动刷新
 if "飞行监控" in st.session_state.page and not st.session_state.heartbeat_paused:
     time.sleep(0.5)
     st.rerun()
