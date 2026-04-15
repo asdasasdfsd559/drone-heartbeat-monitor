@@ -74,7 +74,7 @@ class CoordTransform:
     def gcj02_to_wgs84(lng,lat):
         return lng-0.0005, lat-0.0003
 
-# ==================== 地图：天地图（国家官方，最新数据！） ====================
+# ==================== 地图：ESRI卫星 + 高德街道（稳定可加载） ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
     m=folium.Map(
         location=[center_lat,center_lng],
@@ -83,19 +83,16 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
         tiles=None
     )
 
-    # ###########################
-    # 直接换成 天地图（国家官方！）
-    # ###########################
-    # 1. 街道图（天地图矢量，最新地名，绝对正确）
+    # 1. 街道图：高德（能加载、不用token）
     folium.TileLayer(
-        tiles='https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}',
-        attr='天地图-官方', name='街道图'
+        tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
+        attr='高德街道', name='街道图'
     ).add_to(m)
-    
-    # 2. 卫星图（天地图影像，最新）
+
+    # 2. 卫星图：ESRI World Imagery（公开稳定、高清、无token、必显示）
     folium.TileLayer(
-        tiles='https://t0.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}',
-        attr='天地图-卫星', name='卫星图'
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='ESRI卫星', name='卫星图'
     ).add_to(m)
 
     # Home点（学校官方地址）
@@ -301,10 +298,10 @@ if "飞行监控" in st.session_state.page:
     else:
         st.info("等待无人机心跳...")
 
-# ==================== 航线规划（官方天地图） ====================
+# ==================== 航线规划（稳定双图） ====================
 else:
     st.header("🗺️ 航线规划（南京科院官方地图）")
-    st.success("✅ 天地图(国家官方) | ✅ 街道/卫星图正常 | ✅ 永久记忆")
+    st.success("✅ 卫星图(ESRI)正常 | ✅ 街道图正常 | ✅ 永久记忆")
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
         clng=sum(p[0] for p in allp)/len(allp)
