@@ -20,7 +20,7 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 def get_beijing_time():
     return datetime.now(BEIJING_TZ)
 def get_beijing_time_ms():
-    return get_beijing_time().strftime("%H:%M:%S.%f")[:-3]
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 # ==================== 心跳线程（支持暂停） ====================
 class HeartbeatManager:
@@ -44,7 +44,6 @@ class HeartbeatManager:
             if st.session_state.heartbeat_paused:
                 time.sleep(0.2)
                 continue
-
             s = time.time()
             with self.lock:
                 self.sequence +=1
@@ -82,23 +81,25 @@ class CoordTransform:
     def gcj02_to_wgs84(lng,lat):
         return lng-0.0005, lat-0.0003
 
-# ==================== 地图 ====================
+# ==================== 地图（修复瓦片地址！） ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
     m=folium.Map(
         location=[center_lat,center_lng],
-        zoom_start=19,
+        zoom_start=18,
         control_scale=True,
         tiles=None
     )
 
+    # 🌟 修复：可用街道图（无防盗链）
     folium.TileLayer(
-        tiles='https://wprd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x={x}&y={y}&z={z}',
-        attr='高德-2026最新街道', name='街道图(2026)'
+        tiles='https://tile.openstreetmap.de/{z}/{x}/{y}.png',
+        attr='OpenStreetMap', name='街道图'
     ).add_to(m)
 
+    # 🌟 修复：可用卫星图（无防盗链）
     folium.TileLayer(
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri-2026高清卫星', name='卫星图(超清)'
+        tiles='https://tile.googleapis.com/v1/tiles?x={x}&y={y}&z={z}&scale=2&maptype=satellite',
+        attr='Google', name='卫星图'
     ).add_to(m)
 
     if home_point:
@@ -106,7 +107,7 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
         folium.Marker(
             [h_lat,h_lng],
             icon=folium.Icon(color='green',icon='home'),
-            popup="南京科技职业学院\n📍 江北新区葛关路625号/欣乐路188号"
+            popup="南京科技职业学院"
         ).add_to(m)
         folium.Circle(radius=120,location=[h_lat,h_lng],color='green',fill=True,fill_opacity=0.3).add_to(m)
     
@@ -138,7 +139,6 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
 
 # ==================== 永久保存 ====================
 STATE_FILE = "ground_station_state.json"
-
 def save_state():
     state = {
         "home_point": st.session_state.home_point,
@@ -167,7 +167,6 @@ if 'page' not in st.session_state:
     st.session_state.page="飞行监控"
 
 loaded = load_state()
-
 OFFICIAL_LNG = 118.749413
 OFFICIAL_LAT = 32.234097
 
@@ -192,8 +191,6 @@ for k, v in defaults.items():
 with st.sidebar:
     st.title("🎮 无人机地面站")
     st.markdown("**南京科技职业学院**")
-    st.caption("📍 葛关路625号 | 欣乐路188号")
-
     # 心跳暂停按钮
     if st.button("⏸️ 暂停心跳" if not st.session_state.heartbeat_paused else "▶️ 启动心跳"):
         st.session_state.heartbeat_paused = not st.session_state.heartbeat_paused
@@ -218,7 +215,7 @@ with st.sidebar:
         st.session_state.coord_system=st.selectbox(
             "坐标系",["gcj02","wgs84"],format_func=lambda x:"GCJ02(国内标准)" if x=="gcj02" else "WGS84(GPS)"
         )
-        st.subheader("🏫 学校中心点（精确）")
+        st.subheader("🏫 学校中心点")
         hlng=st.number_input("经度",value=st.session_state.home_point[0],format="%.6f")
         hlat=st.number_input("纬度",value=st.session_state.home_point[1],format="%.6f")
         if st.button("更新中心点"):
@@ -244,22 +241,19 @@ with st.sidebar:
                 save_state()
                 st.rerun()
 
-        st.subheader("🚧 圈选障碍物（点击地图）")
+        st.subheader("🚧 圈选障碍物")
         st.write(f"已打点：{len(st.session_state.draw_points)}")
         height=st.number_input("高度(m)",1,500,25)
-        name=st.text_input("名称","教学楼/操场")
+        name=st.text_input("名称","教学楼")
 
-        if st.button("✅ 保存障碍物（永久记忆）"):
+        if st.button("✅ 保存障碍物"):
             if len(st.session_state.draw_points)>=3:
                 st.session_state.obstacles.append({
                     "name":name,"height":height,"points":st.session_state.draw_points.copy()
                 })
                 st.session_state.draw_points=[]
                 save_state()
-                st.success("✅ 保存成功！关闭再打开仍存在")
                 st.rerun()
-            else:
-                st.warning("至少3个点才能保存区域")
         if st.button("❌ 清空当前打点"):
             st.session_state.draw_points=[]
             save_state()
@@ -281,7 +275,7 @@ with st.sidebar:
 
 # ==================== 飞行监控 ====================
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控（南京科院）")
+    st.header("📡 飞行监控")
     hb_list,seq,_=st.session_state.heartbeat_mgr.get_data()
     if hb_list:
         df=pd.DataFrame(hb_list)
@@ -296,23 +290,19 @@ if "飞行监控" in st.session_state.page:
             seqs=[x['seq'] for x in hb_list[1:]]
             fig_int=go.Figure()
             fig_int.add_trace(go.Scatter(x=seqs,y=intervals,mode='lines+markers',name='间隔',line=dict(color='orange')))
-            fig_int.add_hline(y=1,line_dash='dash',line_color='green',annotation_text='标准1秒')
-            fig_int.update_layout(title='心跳间隔（秒）',xaxis_title='序号',yaxis_title='秒',height=300)
+            fig_int.add_hline(y=1,line_dash='dash',line_color='green')
+            fig_int.update_layout(title='心跳间隔（秒）',height=300)
             st.plotly_chart(fig_int,use_container_width=True)
 
         fig_seq=go.Figure()
-        fig_seq.add_trace(go.Scatter(x=df['time'],y=df['seq'],mode='lines+markers',name='心跳序列',line=dict(color='blue')))
-        fig_seq.update_layout(title='心跳趋势',xaxis_title='时间',yaxis_title='序号',height=300)
+        fig_seq.add_trace(go.Scatter(x=df['time'],y=df['seq'],mode='lines+markers',line=dict(color='blue')))
+        fig_seq.update_layout(title='心跳趋势',height=300)
         st.plotly_chart(fig_seq,use_container_width=True)
-        st.subheader("最近心跳数据")
         st.dataframe(df[['time_ms','seq']].tail(15),use_container_width=True)
-    else:
-        st.info("等待无人机心跳...")
 
 # ==================== 航线规划（无闪烁） ====================
 else:
-    st.header("🗺️ 航线规划（南京科院精确地图）")
-
+    st.header("🗺️ 航线规划")
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
         clng=sum(p[0] for p in allp)/len(allp)
@@ -320,7 +310,6 @@ else:
     else:
         clng,clat=st.session_state.home_point
 
-    # 固定地图容器，不重复重载
     map_container = st.empty()
     with map_container:
         m = create_map(
@@ -331,10 +320,8 @@ else:
             st.session_state.coord_system,
             st.session_state.draw_points
         )
-        # 固定key，不重建地图
         o = st_folium(m, width=1100, height=650, key="MAP_FIXED_KEY")
 
-    # 打点
     if o and o.get("last_clicked"):
         lat = o["last_clicked"]["lat"]
         lng = o["last_clicked"]["lng"]
@@ -344,7 +331,7 @@ else:
             st.session_state.draw_points.append(pt)
             save_state()
 
-# 自动刷新（仅监控页）
+# 自动刷新
 if "飞行监控" in st.session_state.page and not st.session_state.heartbeat_paused:
     time.sleep(0.5)
     st.rerun()
