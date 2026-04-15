@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import time
 import threading
+import json
+import os
 from datetime import datetime, timezone, timedelta
 import folium
 from streamlit_folium import st_folium
@@ -72,29 +74,26 @@ class CoordTransform:
     def gcj02_to_wgs84(lng,lat):
         return lng-0.0005, lat-0.0003
 
-# ==================== 地图（修复底图） ====================
+# ==================== 地图：仅街道+卫星（稳定国内） ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
     m=folium.Map(
         location=[center_lat,center_lng],
         zoom_start=18,
         control_scale=True,
-        tiles=None # 手动加底图
+        tiles=None
     )
-    # 国内可用底图（修复非卫星不显示）
+    # 1. 普通街道图（国内稳定，你要的）
     folium.TileLayer(
-        tiles='https://webrd01.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1',
-        attr='高德路网', name='高德路网'
+        tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
+        attr='高德街道', name='街道图'
     ).add_to(m)
+    # 2. 卫星图（你要的）
     folium.TileLayer(
         tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-        attr='高德卫星', name='高德卫星'
-    ).add_to(m)
-    folium.TileLayer(
-        tiles='https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}',
-        attr='天地图', name='天地图'
+        attr='高德卫星', name='卫星图'
     ).add_to(m)
 
-    # Home
+    # Home点
     if home_point:
         h_lng,h_lat=home_point if coord_system=='gcj02' else CoordTransform.wgs84_to_gcj02(*home_point)
         folium.Marker([h_lat,h_lng],icon=folium.Icon(color='green',icon='home'),
@@ -115,17 +114,40 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
             ps.append([plat,plng])
         folium.Polygon(locations=ps,color='red',fill=True,fill_opacity=0.4,
                        popup=f"{ob['name']} | {ob['height']}m").add_to(m)
-    # 临时多边形
+    # 临时圈选多边形
     if len(temp_points)>=3:
         ps=[[lat,lng] for lng,lat in temp_points]
         folium.Polygon(locations=ps,color='red',weight=3,fill_opacity=0.3).add_to(m)
-    # 打点
+    # 打点标记
     for lng,lat in temp_points:
         folium.CircleMarker(location=[lat,lng],radius=4,color='red',fill=True).add_to(m)
+
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 初始化（修复session保存） ====================
+# ==================== 持久化：文件保存/加载（关闭软件仍存在） ====================
+STATE_FILE = "ground_station_state.json"
+
+def save_state():
+    state = {
+        "home_point": st.session_state.home_point,
+        "waypoints": st.session_state.waypoints,
+        "a_point": st.session_state.a_point,
+        "b_point": st.session_state.b_point,
+        "coord_system": st.session_state.coord_system,
+        "obstacles": st.session_state.obstacles,
+        "draw_points": st.session_state.draw_points
+    }
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+# ==================== 初始化（从文件加载记忆） ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr=HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -133,16 +155,24 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page="飞行监控"
 
-# 核心记忆
-keys=['home_point','waypoints','a_point','b_point','coord_system','obstacles','draw_points','last_click']
-defaults=[
-    (118.749413,32.234097), [],
-    (118.749413,32.234097), (118.750500,32.235200),
-    'wgs84', [], [], None
-]
-for k,v in zip(keys,defaults):
-    if k not in st.session_state:
-        st.session_state[k]=v
+# 加载保存的状态（永久记忆）
+loaded = load_state()
+defaults = {
+    "home_point": (118.749413, 32.234097),
+    "waypoints": [],
+    "a_point": (118.749413, 32.234097),
+    "b_point": (118.750500, 32.235200),
+    "coord_system": "wgs84",
+    "obstacles": [],
+    "draw_points": [],
+    "last_click": None
+}
+
+for k, v in defaults.items():
+    if loaded and k in loaded:
+        st.session_state[k] = loaded[k]
+    elif k not in st.session_state:
+        st.session_state[k] = v
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -167,6 +197,7 @@ with st.sidebar:
         hlat=st.number_input("纬度",value=st.session_state.home_point[1],format="%.6f")
         if st.button("更新中心点"):
             st.session_state.home_point=(hlng,hlat)
+            save_state()
             st.rerun()
 
         st.subheader("航线")
@@ -180,28 +211,32 @@ with st.sidebar:
                 st.session_state.a_point=(alng,alat)
                 st.session_state.b_point=(blng,blat)
                 st.session_state.waypoints=[st.session_state.a_point,st.session_state.b_point]
+                save_state()
         with c2:
             if st.button("清空航线"):
                 st.session_state.waypoints=[]
+                save_state()
+                st.rerun()
 
         st.subheader("🚧 圈选障碍物（点击地图）")
         st.write(f"已打点：{len(st.session_state.draw_points)}")
         height=st.number_input("高度(m)",1,500,20)
         name=st.text_input("名称","障碍物")
 
-        # 保存（修复）
-        if st.button("✅ 保存障碍物"):
+        if st.button("✅ 保存障碍物（永久记忆）"):
             if len(st.session_state.draw_points)>=3:
                 st.session_state.obstacles.append({
                     "name":name,"height":height,"points":st.session_state.draw_points.copy()
                 })
                 st.session_state.draw_points=[]
-                st.success("保存成功 ✅ 已记忆")
+                save_state() # 保存到文件
+                st.success("✅ 保存成功！关闭软件再打开也在！")
                 st.rerun()
             else:
-                st.warning("至少3点")
+                st.warning("至少3个点")
         if st.button("❌ 清空当前打点"):
             st.session_state.draw_points=[]
+            save_state()
             st.rerun()
 
         st.subheader("已保存障碍物")
@@ -211,9 +246,11 @@ with st.sidebar:
             if st.button("删除选中"):
                 idx=int(selected.split(".")[0])-1
                 st.session_state.obstacles.pop(idx)
+                save_state()
                 st.rerun()
         if st.button("🗑️ 清空所有障碍物"):
             st.session_state.obstacles=[]
+            save_state()
             st.rerun()
 
 # ==================== 飞行监控 ====================
@@ -246,10 +283,10 @@ if "飞行监控" in st.session_state.page:
     else:
         st.info("等待心跳...")
 
-# ==================== 航线规划（修复点击保存） ====================
+# ==================== 航线规划（地图+永久记忆） ====================
 else:
-    st.header("🗺️ 航线规划（圈选记忆版）")
-    st.success("✅ 底图正常、障碍物永久保存")
+    st.header("🗺️ 航线规划（街道+卫星）")
+    st.success("✅ 街道图正常显示 | ✅ 障碍物永久保存")
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
         clng=sum(p[0] for p in allp)/len(allp)
@@ -267,18 +304,18 @@ else:
     )
     o=st_folium(m,width=1000,height=600,key="map")
 
-    # 点击打点（修复：去重+锁）
+    # 点击打点（防重复）
     if o and o.get("last_clicked"):
         lat=o["last_clicked"]["lat"]
         lng=o["last_clicked"]["lng"]
-        current_click=(round(lng,6),round(lat,6))
-        # 防重复
-        if current_click != st.session_state.get("last_click",None):
-            st.session_state.last_click=current_click
-            st.session_state.draw_points.append(current_click)
+        pt=(round(lng,6),round(lat,6))
+        if pt != st.session_state.last_click:
+            st.session_state.last_click=pt
+            st.session_state.draw_points.append(pt)
+            save_state()
             st.rerun()
 
-# 自动刷新监控
+# 自动刷新监控页
 if "飞行监控" in st.session_state.page:
     time.sleep(0.5)
     st.rerun()
