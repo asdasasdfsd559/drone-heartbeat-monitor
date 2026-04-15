@@ -74,58 +74,65 @@ class CoordTransform:
     def gcj02_to_wgs84(lng,lat):
         return lng-0.0005, lat-0.0003
 
-# ==================== 地图：仅街道+卫星（稳定国内） ====================
+# ==================== 地图：街道+卫星（国内稳定） ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
     m=folium.Map(
         location=[center_lat,center_lng],
-        zoom_start=18,
+        zoom_start=19,
         control_scale=True,
         tiles=None
     )
-    # 1. 普通街道图（国内稳定，你要的）
+    # 1. 街道图（官方普通地图）
     folium.TileLayer(
         tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
         attr='高德街道', name='街道图'
     ).add_to(m)
-    # 2. 卫星图（你要的）
+    # 2. 卫星图
     folium.TileLayer(
         tiles='https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
         attr='高德卫星', name='卫星图'
     ).add_to(m)
 
-    # Home点
+    # Home点（学校官方地址）
     if home_point:
         h_lng,h_lat=home_point if coord_system=='gcj02' else CoordTransform.wgs84_to_gcj02(*home_point)
-        folium.Marker([h_lat,h_lng],icon=folium.Icon(color='green',icon='home'),
-                      popup="学校中心点").add_to(m)
-        folium.Circle(radius=100,location=[h_lat,h_lng],color='green',fill=True).add_to(m)
+        folium.Marker(
+            [h_lat,h_lng],
+            icon=folium.Icon(color='green',icon='home'),
+            popup="南京科技职业学院\n官方地址：江北新区欣乐路188号"
+        ).add_to(m)
+        folium.Circle(radius=100,location=[h_lat,h_lng],color='green',fill=True,fill_opacity=0.3).add_to(m)
+    
     # 航线
     if waypoints:
         pts=[]
         for wp in waypoints:
             w_lng,w_lat=wp if coord_system=='gcj02' else CoordTransform.wgs84_to_gcj02(*wp)
             pts.append([w_lat,w_lng])
-        folium.PolyLine(pts,color='blue',weight=3).add_to(m)
+        folium.PolyLine(pts,color='blue',weight=4).add_to(m)
+    
     # 障碍物
     for ob in obstacles:
         ps=[]
         for p in ob['points']:
             plng,plat=p if coord_system=='gcj02' else CoordTransform.wgs84_to_gcj02(*p)
             ps.append([plat,plng])
-        folium.Polygon(locations=ps,color='red',fill=True,fill_opacity=0.4,
-                       popup=f"{ob['name']} | {ob['height']}m").add_to(m)
-    # 临时圈选多边形
+        folium.Polygon(
+            locations=ps,color='red',fill=True,fill_opacity=0.5,
+            popup=f"{ob['name']} | {ob['height']}m"
+        ).add_to(m)
+    
+    # 临时圈选
     if len(temp_points)>=3:
         ps=[[lat,lng] for lng,lat in temp_points]
         folium.Polygon(locations=ps,color='red',weight=3,fill_opacity=0.3).add_to(m)
-    # 打点标记
     for lng,lat in temp_points:
-        folium.CircleMarker(location=[lat,lng],radius=4,color='red',fill=True).add_to(m)
+        folium.CircleMarker(location=[lat,lng],radius=5,color='red',fill=True).add_to(m)
 
     folium.LayerControl().add_to(m)
     return m
 
-# ==================== 持久化：文件保存/加载（关闭软件仍存在） ====================
+# ==================== 永久保存（文件级记忆） ====================
 STATE_FILE = "ground_station_state.json"
 
 def save_state():
@@ -147,7 +154,7 @@ def load_state():
             return json.load(f)
     return None
 
-# ==================== 初始化（从文件加载记忆） ====================
+# ==================== 初始化（官方地址默认） ====================
 if 'heartbeat_mgr' not in st.session_state:
     st.session_state.heartbeat_mgr=HeartbeatManager()
     st.session_state.heartbeat_mgr.start()
@@ -155,13 +162,17 @@ if 'heartbeat_mgr' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page="飞行监控"
 
-# 加载保存的状态（永久记忆）
+# 加载记忆 + 官方默认坐标
 loaded = load_state()
+# 【官方地址经纬度】
+OFFICIAL_LNG = 118.749428
+OFFICIAL_LAT = 32.234111
+
 defaults = {
-    "home_point": (118.749413, 32.234097),
+    "home_point": (OFFICIAL_LNG, OFFICIAL_LAT),
     "waypoints": [],
-    "a_point": (118.749413, 32.234097),
-    "b_point": (118.750500, 32.235200),
+    "a_point": (OFFICIAL_LNG, OFFICIAL_LAT),
+    "b_point": (OFFICIAL_LNG + 0.0012, OFFICIAL_LAT + 0.0012),
     "coord_system": "wgs84",
     "obstacles": [],
     "draw_points": [],
@@ -178,21 +189,23 @@ for k, v in defaults.items():
 with st.sidebar:
     st.title("🎮 无人机地面站")
     st.markdown("**南京科技职业学院**")
+    st.caption("📍 官方地址：江北新区欣乐路188号")
     page=st.radio("功能",["📡 飞行监控","🗺️ 航线规划"])
     st.session_state.page=page
+    
     status,ts=st.session_state.heartbeat_mgr.get_connection_status()
     _,seq,_=st.session_state.heartbeat_mgr.get_data()
     if status=="在线":
         st.success(f"✅ 在线 ({ts:.1f}s)")
     else:
         st.error(f"❌ 超时 ({ts:.1f}s)")
-    st.metric("序列号",seq)
+    st.metric("心跳序列号",seq)
 
     if "🗺️ 航线规划" in page:
         st.session_state.coord_system=st.selectbox(
             "坐标系",["wgs84","gcj02"],format_func=lambda x:"WGS84" if x=="wgs84" else "GCJ02"
         )
-        st.subheader("中心点")
+        st.subheader("🏫 学校中心点（官方）")
         hlng=st.number_input("经度",value=st.session_state.home_point[0],format="%.6f")
         hlat=st.number_input("纬度",value=st.session_state.home_point[1],format="%.6f")
         if st.button("更新中心点"):
@@ -200,7 +213,7 @@ with st.sidebar:
             save_state()
             st.rerun()
 
-        st.subheader("航线")
+        st.subheader("✈️ 航线点")
         alng=st.number_input("A经度",value=st.session_state.a_point[0],format="%.6f")
         alat=st.number_input("A纬度",value=st.session_state.a_point[1],format="%.6f")
         blng=st.number_input("B经度",value=st.session_state.b_point[0],format="%.6f")
@@ -220,8 +233,8 @@ with st.sidebar:
 
         st.subheader("🚧 圈选障碍物（点击地图）")
         st.write(f"已打点：{len(st.session_state.draw_points)}")
-        height=st.number_input("高度(m)",1,500,20)
-        name=st.text_input("名称","障碍物")
+        height=st.number_input("高度(m)",1,500,25)
+        name=st.text_input("名称","教学楼/操场")
 
         if st.button("✅ 保存障碍物（永久记忆）"):
             if len(st.session_state.draw_points)>=3:
@@ -229,17 +242,17 @@ with st.sidebar:
                     "name":name,"height":height,"points":st.session_state.draw_points.copy()
                 })
                 st.session_state.draw_points=[]
-                save_state() # 保存到文件
-                st.success("✅ 保存成功！关闭软件再打开也在！")
+                save_state()
+                st.success("✅ 保存成功！关闭再打开仍存在")
                 st.rerun()
             else:
-                st.warning("至少3个点")
+                st.warning("至少3个点才能保存区域")
         if st.button("❌ 清空当前打点"):
             st.session_state.draw_points=[]
             save_state()
             st.rerun()
 
-        st.subheader("已保存障碍物")
+        st.subheader("📋 已保存障碍物")
         obs_names=[f"{i+1}. {o['name']} ({o['height']}m)" for i,o in enumerate(st.session_state.obstacles)]
         if obs_names:
             selected=st.selectbox("选择删除",obs_names)
@@ -255,14 +268,14 @@ with st.sidebar:
 
 # ==================== 飞行监控 ====================
 if "飞行监控" in st.session_state.page:
-    st.header("📡 飞行监控")
+    st.header("📡 飞行监控（南京科院）")
     hb_list,seq,_=st.session_state.heartbeat_mgr.get_data()
     if hb_list:
         df=pd.DataFrame(hb_list)
         col1,col2,col3,col4=st.columns(4)
         col1.metric("总心跳",len(df))
         col2.metric("序列号",seq)
-        col3.metric("状态","✅ 在线" if status=="在线" else "❌ 离线")
+        col3.metric("连接","✅ 在线" if status=="在线" else "❌ 离线")
         col4.metric("丢包率",f"{(seq-len(df))/seq*100:.1f}%" if seq>0 else "0%")
 
         if len(hb_list)>=2:
@@ -270,23 +283,23 @@ if "飞行监控" in st.session_state.page:
             seqs=[x['seq'] for x in hb_list[1:]]
             fig_int=go.Figure()
             fig_int.add_trace(go.Scatter(x=seqs,y=intervals,mode='lines+markers',name='间隔',line=dict(color='orange')))
-            fig_int.add_hline(y=1,line_dash='dash',line_color='green',annotation_text='目标1秒')
-            fig_int.update_layout(title='心跳间隔',xaxis_title='seq',yaxis_title='s',height=300)
+            fig_int.add_hline(y=1,line_dash='dash',line_color='green',annotation_text='标准1秒')
+            fig_int.update_layout(title='心跳间隔（秒）',xaxis_title='序号',yaxis_title='秒',height=300)
             st.plotly_chart(fig_int,use_container_width=True)
 
         fig_seq=go.Figure()
-        fig_seq.add_trace(go.Scatter(x=df['time'],y=df['seq'],mode='lines+markers',name='seq',line=dict(color='blue')))
-        fig_seq.update_layout(title='心跳趋势',xaxis_title='时间',yaxis_title='seq',height=300)
+        fig_seq.add_trace(go.Scatter(x=df['time'],y=df['seq'],mode='lines+markers',name='心跳序列',line=dict(color='blue')))
+        fig_seq.update_layout(title='心跳趋势',xaxis_title='时间',yaxis_title='序号',height=300)
         st.plotly_chart(fig_seq,use_container_width=True)
-        st.subheader("心跳数据")
+        st.subheader("最近心跳数据")
         st.dataframe(df[['time_ms','seq']].tail(15),use_container_width=True)
     else:
-        st.info("等待心跳...")
+        st.info("等待无人机心跳...")
 
-# ==================== 航线规划（地图+永久记忆） ====================
+# ==================== 航线规划（官方地址地图） ====================
 else:
-    st.header("🗺️ 航线规划（街道+卫星）")
-    st.success("✅ 街道图正常显示 | ✅ 障碍物永久保存")
+    st.header("🗺️ 航线规划（南京科院官方地图）")
+    st.success("✅ 街道/卫星图正常 | ✅ 永久记忆 | ✅ 官方地址")
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
         clng=sum(p[0] for p in allp)/len(allp)
@@ -302,7 +315,7 @@ else:
         st.session_state.coord_system,
         st.session_state.draw_points
     )
-    o=st_folium(m,width=1000,height=600,key="map")
+    o=st_folium(m,width=1100,height=650,key="map")
 
     # 点击打点（防重复）
     if o and o.get("last_clicked"):
@@ -315,7 +328,7 @@ else:
             save_state()
             st.rerun()
 
-# 自动刷新监控页
+# 自动刷新监控
 if "飞行监控" in st.session_state.page:
     time.sleep(0.5)
     st.rerun()
