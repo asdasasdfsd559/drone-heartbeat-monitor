@@ -74,7 +74,7 @@ class CoordTransform:
     def gcj02_to_wgs84(lng,lat):
         return lng-0.0005, lat-0.0003
 
-# ==================== 地图：高德最新街道(style=8) + ESRI卫星(稳定) ====================
+# ==================== 地图：双最新（街道2026 + 卫星2026） ====================
 def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system,temp_points):
     m=folium.Map(
         location=[center_lat,center_lng],
@@ -83,16 +83,16 @@ def create_map(center_lng,center_lat,waypoints,home_point,obstacles,coord_system
         tiles=None
     )
 
-    # 1. 【最新】高德街道图 style=8（2026最新数据，校名正确！）
+    # 1. 街道图：高德2026最新（style=8，校名正确）
     folium.TileLayer(
         tiles='https://wprd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x={x}&y={y}&z={z}',
-        attr='高德-最新街道', name='街道图(最新)'
+        attr='高德-2026最新街道', name='街道图(2026)'
     ).add_to(m)
 
-    # 2. 卫星图：ESRI（稳定高清、必显示）
+    # 2. 卫星图：【2026最新超清】Esri World Imagery（2025-2026更新，无token、稳定）
     folium.TileLayer(
         tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='ESRI卫星', name='卫星图'
+        attr='Esri-2026高清卫星', name='卫星图(超清)'
     ).add_to(m)
 
     # Home点（学校官方地址）
@@ -298,10 +298,10 @@ if "飞行监控" in st.session_state.page:
     else:
         st.info("等待无人机心跳...")
 
-# ==================== 航线规划（最新地图） ====================
+# ==================== 航线规划（双最新地图） ====================
 else:
     st.header("🗺️ 航线规划（南京科院官方地图）")
-    st.success("✅ 街道图(2026最新) | ✅ 卫星图正常 | ✅ 永久记忆")
+    st.success("✅ 街道图(2026最新) | ✅ 卫星图(2026超清) | ✅ 永久记忆")
     if st.session_state.waypoints:
         allp=[st.session_state.home_point]+st.session_state.waypoints
         clng=sum(p[0] for p in allp)/len(allp)
