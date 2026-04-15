@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import time
 import json
 import os
 import folium
@@ -117,31 +116,13 @@ for k, v in defaults.items():
     elif k not in st.session_state:
         st.session_state[k] = v
 
-# ==================== 心跳初始化（极简稳定版） ====================
-if "heartbeat_data" not in st.session_state:
-    st.session_state.heartbeat_data = []
-    st.session_state.seq = 0
-    st.session_state.running = False
-
 # ==================== 侧边栏 ====================
 with st.sidebar:
     st.title("🎮 无人机地面站")
     st.markdown("**南京科技职业学院**")
     
-    # 【开始 / 暂停】核心按钮
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("▶️ 开始心跳", use_container_width=True):
-            st.session_state.running = True
-    with c2:
-        if st.button("⏸️ 暂停心跳", use_container_width=True):
-            st.session_state.running = False
-
     page = st.radio("功能", ["📡 飞行监控", "🗺️ 航线规划"])
     st.session_state.page = page
-
-    st.metric("当前序号", st.session_state.seq)
-    st.metric("状态", "✅ 运行中" if st.session_state.running else "⏸️ 已暂停")
 
     if "🗺️ 航线规划" in page:
         st.session_state.coord_system=st.selectbox(
@@ -169,35 +150,45 @@ with st.sidebar:
                 st.session_state.waypoints=[]
                 save_state()
 
-# ==================== 飞行监控（你要的直线图 + 北京时间） ====================
+# ==================== 飞行监控 ====================
 if "飞行监控" in st.session_state.page:
     st.header("📡 飞行监控（北京时间）")
 
-    # 自动心跳逻辑
+    # ==================== 你提供的 正确代码 100% 原样保留 ====================
+    # ==================== 心跳监控 核心逻辑（稳定版） ====================
+    if "heartbeat_data" not in st.session_state:
+        st.session_state.heartbeat_data = []
+        st.session_state.seq = 0
+        st.session_state.running = False
+
+    # 按钮
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("▶️ 开始心跳监测", use_container_width=True):
+            st.session_state.running = True
+    with c2:
+        if st.button("⏸️ 暂停心跳监测", use_container_width=True):
+            st.session_state.running = False
+
+    # 自动刷新 + 实时显示
+    placeholder = st.empty()
+
+    # 核心运行逻辑（不会卡死）
     if st.session_state.running:
         st.session_state.seq += 1
-        # 北京时间
-        t = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%H:%M:%S")
+        t = datetime.datetime.now().strftime("%H:%M:%S")
         st.session_state.heartbeat_data.append({
             "序号": st.session_state.seq,
             "时间": t,
             "状态": "在线正常"
         })
-        if len(st.session_state.heartbeat_data) > 60:
-            st.session_state.heartbeat_data.pop(0)
-        time.sleep(1)
-        st.rerun()
 
-    # 显示直线图 + 表格
-    df = pd.DataFrame(st.session_state.heartbeat_data)
-    if not df.empty:
-        st.subheader("心跳趋势（笔直直线）")
-        st.line_chart(df, x="序号", y="序号", color="#00a8ff")
-
-        st.subheader("心跳数据")
-        st.dataframe(df[["时间", "序号", "状态"]], use_container_width=True)
-    else:
-        st.info("▶️ 点击左侧【开始心跳】自动每秒发送一条数据")
+    # 显示图表 + 表格
+    with placeholder.container():
+        df = pd.DataFrame(st.session_state.heartbeat_data)
+        if not df.empty:
+            st.line_chart(df, x="时间", y="序号", color="#ff4560")
+            st.dataframe(df, use_container_width=True, height=200)
 
 # ==================== 航线规划 ====================
 else:
